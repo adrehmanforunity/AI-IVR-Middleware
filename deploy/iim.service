@@ -1,0 +1,22 @@
+[Unit]
+Description=Intelligent IVR Middleware (IIM)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=iim
+Group=iim
+WorkingDirectory=/opt/iim
+EnvironmentFile=/opt/iim/.env
+ExecStart=/usr/bin/node /opt/iim/dist/index.js
+Restart=on-failure
+RestartSec=5
+# IIM already stays up on unhandled errors; this restarts only a true process death.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+NoNewPrivileges=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
