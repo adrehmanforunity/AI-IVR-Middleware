@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PULSE API End Point Setup — IIM</title>
+    <link rel="stylesheet" href="/css/iim.css?v=2" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">IIM</div>
+        <div class="top-user">
+          <div class="user-menu" id="user-menu">
+            <button type="button" class="user-menu-btn" id="user-menu-btn" aria-expanded="false">
+              <span class="avatar" id="avatar">S</span>
+              <span id="who">Super</span>
+            </button>
+            <div class="user-menu-drop" id="user-menu-drop">
+              <button type="button" id="open-password">Change password</button>
+            </div>
+          </div>
+          <button class="btn ghost" type="button" id="logout">Logout</button>
+        </div>
+      </header>
+      <div class="app-body">
+        <nav class="sidebar">
+          <div class="nav-label">MONITORING</div>
+          <a href="/app">Live dashboard</a>
+          <a href="/stations">IIM stations</a>
+          <a href="/docs" target="_blank" rel="noopener">IIM Swagger</a>
+          <a id="pulse-swagger" href="https://petstore.swagger.io/" target="_blank" rel="noopener">PULSE Swagger</a>
+          <div class="nav-label">MANAGEMENT</div>
+          <a href="/setups">Call setups</a>
+          <a href="/ivrs">IVRs</a>
+          <a href="/functions">IVR functions</a>
+          <a href="/telephony">Telephony Setup</a>
+          <a class="active" href="/pulse">PULSE API End Point Setup</a>
+        </nav>
+        <main class="main">
+          <div class="hello">
+            <div>
+              <h2>PULSE API End Point Setup</h2>
+              <p>
+                Store PULSE CX endpoints here (URL, timeout, retries, mock). IVR functions call these APIs when a menu
+                <strong>Do</strong> row says so — including before answer, if that is how you write the program.
+              </p>
+            </div>
+          </div>
+
+          <section class="panel">
+            <h3>Defined APIs</h3>
+            <div id="list" class="muted">Loading…</div>
+          </section>
+
+          <section class="panel">
+            <h3 id="form-title">Add API</h3>
+            <form id="form">
+              <div class="form-grid">
+                <div>
+                  <label for="slot">ID (used in call flow)</label>
+                  <input id="slot" name="slot" required pattern="[A-Za-z][A-Za-z0-9_-]{0,63}" placeholder="preAnswer" />
+                </div>
+                <div>
+                  <label for="name">Name</label>
+                  <input id="name" name="name" required placeholder="Pre-answer" />
+                </div>
+                <div class="full">
+                  <label for="description">Description</label>
+                  <input id="description" name="description" placeholder="When this is called during the call" />
+                </div>
+                <div>
+                  <label for="method">Method</label>
+                  <select id="method">
+                    <option>POST</option>
+                    <option>GET</option>
+                    <option>PUT</option>
+                    <option>PATCH</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="endpoint">Endpoint URL</label>
+                  <input id="endpoint" placeholder="https://pulse.example/api/..." />
+                </div>
+                <div>
+                  <label for="timeoutMs">Timeout (ms)</label>
+                  <input id="timeoutMs" type="number" min="100" value="5000" />
+                </div>
+                <div>
+                  <label for="retries">Retries before give up</label>
+                  <input id="retries" type="number" min="0" value="0" />
+                </div>
+                <div class="check">
+                  <input id="enabled" type="checkbox" checked />
+                  <label for="enabled">Enabled (IIM will call this API)</label>
+                </div>
+                <div class="check">
+                  <input id="mockEnabled" type="checkbox" />
+                  <label for="mockEnabled">Use mock (do not call PULSE)</label>
+                </div>
+                <div>
+                  <label for="mockStatus">Mock HTTP status (optional)</label>
+                  <input id="mockStatus" type="number" min="100" max="599" placeholder="200" />
+                </div>
+                <div class="full">
+                  <label for="mockJson">Mock JSON response (optional)</label>
+                  <textarea id="mockJson" placeholder='{"interactionId":"int-1"}'></textarea>
+                </div>
+                <div class="full">
+                  <label for="mockError">Mock error (optional — fails the call if mock is on)</label>
+                  <input id="mockError" placeholder="PULSE unavailable" />
+                </div>
+              </div>
+              <div class="row" style="margin-top:16px">
+                <button class="btn" type="submit" id="save">Save</button>
+                <button class="btn ghost" type="button" id="reset">New API</button>
+                <span class="muted" id="msg"></span>
+              </div>
+            </form>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="/js/user-menu.js?v=3"></script>
+    <script src="/js/pulse.js"></script>
+  </body>
+</html>

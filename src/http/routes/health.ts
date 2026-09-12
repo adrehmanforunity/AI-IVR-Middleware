@@ -40,7 +40,7 @@ export async function registerHealthRoutes(
     {
       schema: {
         tags: ["ops"],
-        summary: "Readiness — SQLite plus AMI/ARI when telephony is connected. Setup drain does not fail ready.",
+        summary: "Readiness — SQLite plus each enabled AMI/ARI link. Disabled links and setup drain do not fail ready.",
         response: {
           200: {
             type: "object",

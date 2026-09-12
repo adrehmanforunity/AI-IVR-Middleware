@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IIM stations — IIM</title>
+    <link rel="stylesheet" href="/css/iim.css?v=2" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">IIM</div>
+        <div class="top-user">
+          <div class="user-menu" id="user-menu">
+            <button type="button" class="user-menu-btn" id="user-menu-btn" aria-expanded="false">
+              <span class="avatar" id="avatar">S</span>
+              <span id="who">Super</span>
+            </button>
+            <div class="user-menu-drop" id="user-menu-drop">
+              <button type="button" id="open-password">Change password</button>
+            </div>
+          </div>
+          <button class="btn ghost" type="button" id="logout">Logout</button>
+        </div>
+      </header>
+      <div class="app-body">
+        <nav class="sidebar">
+          <div class="nav-label">MONITORING</div>
+          <a href="/app">Live dashboard</a>
+          <a class="active" href="/stations">IIM stations</a>
+          <a href="/docs" target="_blank" rel="noopener">IIM Swagger</a>
+          <a id="pulse-swagger" href="https://petstore.swagger.io/" target="_blank" rel="noopener">PULSE Swagger</a>
+          <div class="nav-label">MANAGEMENT</div>
+          <a href="/setups">Call setups</a>
+          <a href="/ivrs">IVRs</a>
+          <a href="/functions">IVR functions</a>
+          <a href="/telephony">Telephony Setup</a>
+          <a href="/pulse">PULSE API End Point Setup</a>
+        </nav>
+        <main class="main">
+          <div class="hello">
+            <div>
+              <h2>IIM stations</h2>
+              <p id="range-hint">
+                Agent-side extensions this process owns. Change the range on <a href="/telephony">Telephony Setup</a>
+                (system configuration). Default 3001–3999. Status is one cached ARI list, not AMI events.
+              </p>
+            </div>
+          </div>
+          <div class="cards" id="kpis"></div>
+          <section class="panel">
+            <div class="row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 8px">
+              <button class="btn ghost filter-btn active" type="button" data-filter="all">All</button>
+              <button class="btn ghost filter-btn" type="button" data-filter="idle">Idle</button>
+              <button class="btn ghost filter-btn" type="button" data-filter="in-use">In use</button>
+              <button class="btn ghost filter-btn" type="button" data-filter="unregistered">Unregistered</button>
+              <button class="btn ghost filter-btn" type="button" data-filter="not-on-pbx">Not on PBX</button>
+              <span class="muted" id="refresh-hint"></span>
+            </div>
+            <div id="list" class="muted">Loading…</div>
+            <div id="pager" class="pager" hidden></div>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="/js/user-menu.js?v=3"></script>
+    <script src="/js/stations.js?v=2"></script>
+  </body>
+</html>

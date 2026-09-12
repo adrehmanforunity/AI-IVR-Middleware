@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Call setups — IIM</title>
+    <link rel="stylesheet" href="/css/iim.css?v=2" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">IIM</div>
+        <div class="top-user">
+          <div class="user-menu" id="user-menu">
+            <button type="button" class="user-menu-btn" id="user-menu-btn" aria-expanded="false">
+              <span class="avatar" id="avatar">S</span>
+              <span id="who">Super</span>
+            </button>
+            <div class="user-menu-drop" id="user-menu-drop">
+              <button type="button" id="open-password">Change password</button>
+            </div>
+          </div>
+          <button class="btn ghost" type="button" id="logout">Logout</button>
+        </div>
+      </header>
+      <div class="app-body">
+        <nav class="sidebar">
+          <div class="nav-label">MONITORING</div>
+          <a href="/app">Live dashboard</a>
+          <a href="/stations">IIM stations</a>
+          <a href="/docs" target="_blank" rel="noopener">IIM Swagger</a>
+          <a id="pulse-swagger" href="https://petstore.swagger.io/" target="_blank" rel="noopener">PULSE Swagger</a>
+          <div class="nav-label">MANAGEMENT</div>
+          <a class="active" href="/setups">Call setups</a>
+          <a href="/ivrs">IVRs</a>
+          <a href="/functions">IVR functions</a>
+          <a href="/telephony">Telephony Setup</a>
+          <a href="/pulse">PULSE API End Point Setup</a>
+        </nav>
+        <main class="main">
+          <div class="hello">
+            <div>
+              <h2>Call setups</h2>
+              <p>
+                Which inbound DIDs (and optional trunks) IIM will admit, plus the live channel cap. Leave trunk empty
+                to match any channel — required for lab calls from a phone (2098 → 7777).
+              </p>
+            </div>
+          </div>
+
+          <section class="panel">
+            <h3>Defined setups</h3>
+            <div id="list" class="muted">Loading…</div>
+          </section>
+
+          <section class="panel">
+            <h3 id="form-title">Add setup</h3>
+            <form id="form">
+              <input type="hidden" id="setupId" value="" />
+              <div class="form-grid">
+                <div>
+                  <label for="name">Name</label>
+                  <input id="name" required placeholder="Lab inbound 7777" />
+                </div>
+                <div>
+                  <label for="maxConcurrent">Max concurrent channels</label>
+                  <input id="maxConcurrent" type="number" min="1" value="10" required />
+                </div>
+                <div>
+                  <label for="matchDid">Match DID</label>
+                  <input id="matchDid" placeholder="7777" />
+                  <div class="hint">The number the caller dialed / inbound DID. Empty = any DID.</div>
+                </div>
+                <div>
+                  <label for="matchTrunk">Match trunk</label>
+                  <input id="matchTrunk" placeholder="leave empty for any" />
+                  <div class="hint">PJSIP endpoint / trunk name. Empty = any (use empty when calling from 2098).</div>
+                </div>
+                <div>
+                  <label for="ivrId">IVR program</label>
+                  <select id="ivrId">
+                    <option value="">None (answer only)</option>
+                  </select>
+                  <div class="hint">Create IVRs under IVRs in the sidebar, then attach one here.</div>
+                </div>
+                <div class="check">
+                  <input id="enabled" type="checkbox" checked />
+                  <label for="enabled">Enabled (accept new calls)</label>
+                </div>
+              </div>
+              <div class="row" style="margin-top: 16px">
+                <button class="btn" type="submit">Save setup</button>
+                <button class="btn ghost" type="button" id="reset">New setup</button>
+                <span class="muted" id="msg"></span>
+              </div>
+            </form>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="/js/user-menu.js?v=3"></script>
+    <script src="/js/setups.js"></script>
+  </body>
+</html>

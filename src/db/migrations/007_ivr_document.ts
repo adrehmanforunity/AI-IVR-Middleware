@@ -1,0 +1,15 @@
+export const MIGRATION_V7 = `
+ALTER TABLE ivrs ADD COLUMN document TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE ivrs ADD COLUMN entry_key TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS ivr_functions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  pulse_slot TEXT NOT NULL,
+  param_hint TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`;

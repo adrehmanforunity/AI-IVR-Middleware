@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign In — IIM</title>
+    <link rel="stylesheet" href="/css/iim.css" />
+  </head>
+  <body class="login-body">
+    <form class="login-card" id="login-form" autocomplete="on">
+      <h1>Sign In</h1>
+      <p class="welcome">Welcome to IIM</p>
+      <label for="username">User Name</label>
+      <input id="username" name="username" type="text" required autofocus />
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" required />
+      <div class="login-error" id="error"></div>
+      <button class="btn-login" type="submit" id="submit">Login</button>
+      <p class="login-foot">Intelligent IVR Middleware</p>
+    </form>
+    <script src="/js/login.js"></script>
+  </body>
+</html>

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ConfigStore } from "../../db/sqlite.js";
 import type { AsteriskTarget } from "../../asterisk/types.js";
+import { userFromRequest } from "./auth.js";
 
 const targetSchema = {
   type: "object",
@@ -9,23 +10,27 @@ const targetSchema = {
     amiPort: { type: "number" },
     amiUser: { type: "string" },
     amiPasswordSet: { type: "boolean" },
+    amiPasswordFromEnv: { type: "boolean" },
     ariBaseUrl: { type: "string" },
     ariUser: { type: "string" },
     ariPasswordSet: { type: "boolean" },
+    ariPasswordFromEnv: { type: "boolean" },
     stasisApp: { type: "string" },
     updatedAt: { type: "string" },
   },
 };
 
-function publicTarget(t: AsteriskTarget) {
+function publicTarget(t: AsteriskTarget, overrides: { amiFromEnv: boolean; ariFromEnv: boolean }) {
   return {
     host: t.host,
     amiPort: t.amiPort,
     amiUser: t.amiUser,
     amiPasswordSet: Boolean(t.amiPassword),
+    amiPasswordFromEnv: overrides.amiFromEnv,
     ariBaseUrl: t.ariBaseUrl,
     ariUser: t.ariUser,
     ariPasswordSet: Boolean(t.ariPassword),
+    ariPasswordFromEnv: overrides.ariFromEnv,
     stasisApp: t.stasisApp,
     updatedAt: t.updatedAt,
   };
@@ -42,7 +47,7 @@ export async function registerConfigRoutes(app: FastifyInstance, store: ConfigSt
         response: { 200: targetSchema },
       },
     },
-    async () => publicTarget(store.getTarget()),
+    async () => publicTarget(store.getTarget(), store.passwordOverrides()),
   );
 
   app.put(
@@ -78,9 +83,9 @@ export async function registerConfigRoutes(app: FastifyInstance, store: ConfigSt
     async (req, reply) => {
       try {
         const body = req.body as Partial<AsteriskTarget>;
-        const actor = typeof req.headers["x-api-key"] === "string" ? "api-key" : "unknown";
+        const actor = userFromRequest(req, store)?.username ?? (typeof req.headers["x-api-key"] === "string" ? "api-key" : "unknown");
         const saved = store.putTarget(body, actor);
-        return publicTarget(saved);
+        return publicTarget(saved, store.passwordOverrides());
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return reply.code(503).send({ error: message });
@@ -126,6 +131,10 @@ export async function registerConfigRoutes(app: FastifyInstance, store: ConfigSt
             type: "object",
             additionalProperties: { type: "string" },
           },
+          400: {
+            type: "object",
+            properties: { error: { type: "string" } },
+          },
           503: {
             type: "object",
             properties: { error: { type: "string" } },
@@ -136,12 +145,13 @@ export async function registerConfigRoutes(app: FastifyInstance, store: ConfigSt
     async (req, reply) => {
       try {
         const { key, value } = req.body as { key: string; value: string };
-        const actor = typeof req.headers["x-api-key"] === "string" ? "api-key" : "unknown";
+        const actor = userFromRequest(req, store)?.username ?? (typeof req.headers["x-api-key"] === "string" ? "api-key" : "unknown");
         store.putSetting(key, value, actor);
         return store.getSettings();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        return reply.code(503).send({ error: message });
+        const status = (err as { code?: string }).code === "BAD_REQUEST" ? 400 : 503;
+        return reply.code(status).send({ error: message });
       }
     },
   );

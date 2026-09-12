@@ -1,0 +1,3 @@
+export const MIGRATION_V5 = `
+ALTER TABLE pulse_apis ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+`;

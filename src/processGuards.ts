@@ -1,4 +1,4 @@
-import type { Logger } from "./logging.js";
+import type { Logger } from "./logging/index.js";
 
 export type ProcessHealth = {
   healthy: boolean;

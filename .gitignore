@@ -6,4 +6,7 @@ data/
 *.db-wal
 .env
 *.log
+*.AMI
+*.ARI
+logs/
 .DS_Store

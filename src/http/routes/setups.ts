@@ -1,10 +1,7 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ConfigStore } from "../../db/sqlite.js";
 import type { CallRegistry } from "../../calls/registry.js";
-
-function actor(req: { headers: Record<string, unknown> }): string {
-  return typeof req.headers["x-api-key"] === "string" ? "api-key" : "unknown";
-}
+import { userFromRequest } from "./auth.js";
 
 const setupBody = {
   type: "object",
@@ -12,9 +9,10 @@ const setupBody = {
   properties: {
     name: { type: "string" },
     enabled: { type: "boolean" },
-    matchDid: { type: "string", description: "DID to accept, empty = any" },
-    matchTrunk: { type: "string", description: "Trunk name to accept, empty = any" },
+    matchDid: { type: "string", description: "DID to accept, empty = any trunk DID" },
+    matchTrunk: { type: "string", description: "Trunk/endpoint name, empty = any" },
     maxConcurrent: { type: "number", minimum: 1 },
+    ivrId: { type: "number", nullable: true, description: "IVR to run after admit" },
   },
 };
 
@@ -23,6 +21,8 @@ export async function registerSetupRoutes(
   store: ConfigStore,
   registry: CallRegistry,
 ): Promise<void> {
+  const who = (req: FastifyRequest) => userFromRequest(req, store)?.username ?? "api-key";
+
   app.get(
     "/v1/setups",
     {
@@ -52,12 +52,13 @@ export async function registerSetupRoutes(
         matchDid?: string;
         matchTrunk?: string;
         maxConcurrent?: number;
+        ivrId?: number | null;
       };
-      if (!body.matchDid && !body.matchTrunk) {
+      if (!body.matchDid?.trim() && !body.matchTrunk?.trim()) {
         return reply.code(400).send({ error: "matchDid or matchTrunk is required" });
       }
       try {
-        return store.createSetup(body, actor(req));
+        return store.createSetup(body, who(req));
       } catch (err) {
         return reply.code(503).send({ error: err instanceof Error ? err.message : String(err) });
       }
@@ -78,7 +79,29 @@ export async function registerSetupRoutes(
     async (req, reply) => {
       const id = Number((req.params as { id: string }).id);
       try {
-        return store.updateSetup(id, req.body as object, actor(req));
+        return store.updateSetup(id, req.body as object, who(req));
+      } catch (err) {
+        const code = (err as { code?: string }).code === "NOT_FOUND" ? 404 : 503;
+        return reply.code(code).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
+
+  app.delete(
+    "/v1/setups/:id",
+    {
+      schema: {
+        tags: ["setups"],
+        summary: "Remove a call setup",
+        security: [{ apiKey: [] }],
+        params: { type: "object", properties: { id: { type: "number" } } },
+      },
+    },
+    async (req, reply) => {
+      const id = Number((req.params as { id: string }).id);
+      try {
+        store.deleteSetup(id, who(req));
+        return { ok: true, id };
       } catch (err) {
         const code = (err as { code?: string }).code === "NOT_FOUND" ? 404 : 503;
         return reply.code(code).send({ error: err instanceof Error ? err.message : String(err) });

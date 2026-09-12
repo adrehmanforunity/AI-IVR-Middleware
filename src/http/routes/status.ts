@@ -9,6 +9,7 @@ const linkSchema = {
     lastError: { type: ["string", "null"] },
     reconnectCount: { type: "number" },
     lastEventAt: { type: ["string", "null"] },
+    nextRetryAt: { type: ["string", "null"] },
     restState: { type: "string" },
     wsState: { type: "string" },
   },

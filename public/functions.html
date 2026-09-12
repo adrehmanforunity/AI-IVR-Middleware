@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IVR functions — IIM</title>
+    <link rel="stylesheet" href="/css/iim.css?v=2" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">IIM</div>
+        <div class="top-user">
+          <div class="user-menu" id="user-menu">
+            <button type="button" class="user-menu-btn" id="user-menu-btn" aria-expanded="false">
+              <span class="avatar" id="avatar">S</span>
+              <span id="who">Super</span>
+            </button>
+            <div class="user-menu-drop" id="user-menu-drop">
+              <button type="button" id="open-password">Change password</button>
+            </div>
+          </div>
+          <button class="btn ghost" type="button" id="logout">Logout</button>
+        </div>
+      </header>
+      <div class="app-body">
+        <nav class="sidebar">
+          <div class="nav-label">MONITORING</div>
+          <a href="/app">Live dashboard</a>
+          <a href="/stations">IIM stations</a>
+          <a href="/docs" target="_blank" rel="noopener">IIM Swagger</a>
+          <a id="pulse-swagger" href="https://petstore.swagger.io/" target="_blank" rel="noopener">PULSE Swagger</a>
+          <div class="nav-label">MANAGEMENT</div>
+          <a href="/setups">Call setups</a>
+          <a href="/ivrs">IVRs</a>
+          <a class="active" href="/functions">IVR functions</a>
+          <a href="/telephony">Telephony Setup</a>
+          <a href="/pulse">PULSE API End Point Setup</a>
+        </nav>
+        <main class="main">
+          <div class="hello">
+            <div>
+              <h2>IVR functions</h2>
+              <p>
+                Generic functions ship with IIM. Custom functions are for this customer: name them, point them at a
+                PULSE API, then pick them in an IVR <strong>Do</strong> row. Each function returns true or false.
+              </p>
+            </div>
+          </div>
+
+          <section class="panel">
+            <h3>Generic</h3>
+            <div id="generic" class="muted">Loading…</div>
+          </section>
+
+          <section class="panel">
+            <h3>Custom</h3>
+            <div id="custom" class="muted">Loading…</div>
+          </section>
+
+          <section class="panel">
+            <h3 id="form-title">Add custom function</h3>
+            <form id="form">
+              <input type="hidden" id="fnId" value="" />
+              <div class="form-grid">
+                <div>
+                  <label for="name">Name (what IVR sees)</label>
+                  <input id="name" required placeholder="proc_bok_authcaller" />
+                </div>
+                <div>
+                  <label for="pulseSlot">PULSE API</label>
+                  <select id="pulseSlot" required></select>
+                </div>
+                <div class="full">
+                  <label for="description">Description</label>
+                  <input id="description" placeholder="Authenticate BOK caller" />
+                </div>
+                <div>
+                  <label for="paramHint">Param hint</label>
+                  <input id="paramHint" placeholder="BOK" />
+                </div>
+                <div class="check">
+                  <input id="enabled" type="checkbox" checked />
+                  <label for="enabled">Enabled</label>
+                </div>
+              </div>
+              <div class="row" style="margin-top: 16px">
+                <button class="btn" type="submit">Save function</button>
+                <button class="btn ghost" type="button" id="reset">New</button>
+                <span class="muted" id="msg"></span>
+              </div>
+            </form>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="/js/user-menu.js?v=3"></script>
+    <script src="/js/functions.js"></script>
+  </body>
+</html>

@@ -2,17 +2,34 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Env } from "../config/env.js";
-import type { Logger } from "../logging.js";
+import type { Logger } from "../logging/index.js";
 import type { AsteriskTarget } from "../asterisk/types.js";
 import { MIGRATION_V1 } from "./migrations/001_init.js";
 import { MIGRATION_V2 } from "./migrations/002_call_mgmt.js";
+import { MIGRATION_V3 } from "./migrations/003_users.js";
+import { hashPassword, newSessionToken, verifyPassword } from "../auth/password.js";
 import type {
   CallSession,
   CallSetup,
+  Ivr,
+  IvrCustomFunction,
+  IvrCustomFunctionInput,
+  IvrFunctionDef,
+  IvrMenu,
+  IvrSaveInput,
   PulseApiConfig,
   PulseApiSlot,
+  StationDirectory,
   TelephonyConfig,
 } from "../domain/types.js";
+import { MIGRATION_V6 } from "./migrations/006_ivr.js";
+import { MIGRATION_V7 } from "./migrations/007_ivr_document.js";
+import { MIGRATION_V8 } from "./migrations/008_call_progress.js";
+import { MIGRATION_V9 } from "./migrations/009_stations.js";
+import { GENERIC_FUNCTIONS } from "../ivr/catalog.js";
+import { normalizeSave } from "../ivr/document.js";
+import { parseCallerLanguage } from "../calls/progress.js";
+import { DEFAULT_OWNED_EXT_FROM, DEFAULT_OWNED_EXT_TO, parseOwnedExtensions } from "../calls/match.js";
 
 type TargetRow = {
   host: string;
@@ -24,6 +41,14 @@ type TargetRow = {
   ari_password: string | null;
   stasis_app: string;
   updated_at: string;
+};
+
+export type AuthUser = {
+  id: number;
+  username: string;
+  role: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ConfigSnapshot = {
@@ -57,6 +82,7 @@ export class ConfigStore {
       this.lastError = null;
       this.ensureSeedTarget();
       this.ensureCallMgmtSeed();
+      this.ensureSuperadmin();
       this.refreshSnapshot();
       this.log.info({ component: "sqlite", path: this.env.SQLITE_PATH }, "sqlite ready");
     } catch (err) {
@@ -129,11 +155,12 @@ export class ConfigStore {
   }
 
   putSetting(key: string, value: string, actor: string): void {
+    const stored = key === "pulse_swagger_url" ? normalizeHttpUrl(value) : value;
     this.runWrite(() => {
       const db = this.requireDb();
       db.prepare(
         "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-      ).run(key, value);
+      ).run(key, stored);
       db.prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)").run(
         new Date().toISOString(),
         actor,
@@ -144,22 +171,102 @@ export class ConfigStore {
     this.refreshSnapshot();
   }
 
-  getTelephony(): TelephonyConfig {
-    const s = this.getSettings();
-    const desired = s.telephony_desired === "disconnect" ? "disconnect" : "connect";
-    const retryDelayMs = Math.max(500, Number(s.telephony_retry_delay_ms ?? 5000) || 5000);
-    return { desired, retryDelayMs };
+  listStations(): StationDirectory[] {
+    if (!this.db) return [];
+    const rows = this.db.prepare("SELECT * FROM stations ORDER BY CAST(extension AS INTEGER)").all() as StationRowDb[];
+    return rows.map(mapStation);
   }
 
-  putTelephony(patch: Partial<TelephonyConfig>, actor: string): TelephonyConfig {
-    const current = this.getTelephony();
-    const next: TelephonyConfig = {
-      desired: patch.desired ?? current.desired,
-      retryDelayMs: patch.retryDelayMs ?? current.retryDelayMs,
+  putStation(
+    extension: string,
+    input: { displayName?: string; agentId?: string; notes?: string },
+    actor: string,
+  ): StationDirectory {
+    const now = new Date().toISOString();
+    const existing = this.db
+      ? (this.db.prepare("SELECT * FROM stations WHERE extension = ?").get(extension) as StationRowDb | undefined)
+      : undefined;
+    const current = existing ? mapStation(existing) : undefined;
+    const row: StationDirectory = {
+      extension,
+      displayName: input.displayName !== undefined ? input.displayName.trim() : (current?.displayName ?? ""),
+      agentId: input.agentId !== undefined ? input.agentId.trim() : (current?.agentId ?? ""),
+      notes: input.notes !== undefined ? input.notes.trim() : (current?.notes ?? ""),
+      updatedAt: now,
     };
-    this.putSetting("telephony_desired", next.desired, actor);
-    this.putSetting("telephony_retry_delay_ms", String(next.retryDelayMs), actor);
+    this.runWrite(() => {
+      this.requireDb()
+        .prepare(
+          `INSERT INTO stations (extension, display_name, agent_id, notes, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(extension) DO UPDATE SET
+             display_name=excluded.display_name,
+             agent_id=excluded.agent_id,
+             notes=excluded.notes,
+             updated_at=excluded.updated_at`,
+        )
+        .run(row.extension, row.displayName, row.agentId, row.notes, row.updatedAt);
+      this.requireDb()
+        .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
+        .run(now, actor, "put_station", JSON.stringify({ extension }));
+    });
+    return row;
+  }
+
+  getTelephony(): TelephonyConfig {
+    const s = this.getSettings();
+    const legacyDesired = s.telephony_desired === "disconnect" ? "disconnect" : "connect";
+    const legacyRetry = Math.max(500, Number(s.telephony_retry_delay_ms ?? 5000) || 5000);
+    const owned = parseOwnedExtensions(
+      this.env.IIM_OWNED_EXT_FROM ?? s.iim_owned_ext_from ?? DEFAULT_OWNED_EXT_FROM,
+      this.env.IIM_OWNED_EXT_TO ?? s.iim_owned_ext_to ?? DEFAULT_OWNED_EXT_TO,
+    );
+    return {
+      ami: {
+        desired: (s.telephony_ami_desired ?? legacyDesired) === "disconnect" ? "disconnect" : "connect",
+        retryDelayMs: Math.max(500, Number(s.telephony_ami_retry_delay_ms ?? legacyRetry) || legacyRetry),
+        connectTimeoutMs: Math.max(500, Number(s.telephony_ami_connect_timeout_ms ?? 8000) || 8000),
+      },
+      ari: {
+        desired: (s.telephony_ari_desired ?? legacyDesired) === "disconnect" ? "disconnect" : "connect",
+        retryDelayMs: Math.max(500, Number(s.telephony_ari_retry_delay_ms ?? legacyRetry) || legacyRetry),
+        connectTimeoutMs: Math.max(500, Number(s.telephony_ari_connect_timeout_ms ?? 8000) || 8000),
+      },
+      ownedExtensions: owned,
+    };
+  }
+
+  putTelephony(
+    patch: {
+      ami?: Partial<TelephonyConfig["ami"]>;
+      ari?: Partial<TelephonyConfig["ari"]>;
+      ownedExtensions?: Partial<TelephonyConfig["ownedExtensions"]>;
+    },
+    actor: string,
+  ): TelephonyConfig {
+    const current = this.getTelephony();
+    const ami = { ...current.ami, ...patch.ami };
+    const ari = { ...current.ari, ...patch.ari };
+    const owned = parseOwnedExtensions(
+      patch.ownedExtensions?.from ?? current.ownedExtensions.from,
+      patch.ownedExtensions?.to ?? current.ownedExtensions.to,
+    );
+    this.putSetting("telephony_ami_desired", ami.desired, actor);
+    this.putSetting("telephony_ami_retry_delay_ms", String(ami.retryDelayMs), actor);
+    this.putSetting("telephony_ami_connect_timeout_ms", String(ami.connectTimeoutMs), actor);
+    this.putSetting("telephony_ari_desired", ari.desired, actor);
+    this.putSetting("telephony_ari_retry_delay_ms", String(ari.retryDelayMs), actor);
+    this.putSetting("telephony_ari_connect_timeout_ms", String(ari.connectTimeoutMs), actor);
+    this.putSetting("iim_owned_ext_from", String(owned.from), actor);
+    this.putSetting("iim_owned_ext_to", String(owned.to), actor);
     return this.getTelephony();
+  }
+
+  passwordOverrides(): { amiFromEnv: boolean; ariFromEnv: boolean } {
+    return {
+      amiFromEnv: Boolean(this.env.AMI_PASSWORD),
+      ariFromEnv: Boolean(this.env.ARI_PASSWORD),
+    };
   }
 
   listSetups(): CallSetup[] {
@@ -175,7 +282,14 @@ export class ConfigStore {
   }
 
   createSetup(
-    input: { name: string; enabled?: boolean; matchDid?: string; matchTrunk?: string; maxConcurrent?: number },
+    input: {
+      name: string;
+      enabled?: boolean;
+      matchDid?: string;
+      matchTrunk?: string;
+      maxConcurrent?: number;
+      ivrId?: number | null;
+    },
     actor: string,
   ): CallSetup {
     const now = new Date().toISOString();
@@ -183,8 +297,8 @@ export class ConfigStore {
     this.runWrite(() => {
       const r = this.requireDb()
         .prepare(
-          `INSERT INTO call_setups (name, enabled, match_did, match_trunk, max_concurrent, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO call_setups (name, enabled, match_did, match_trunk, max_concurrent, ivr_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.name,
@@ -192,6 +306,7 @@ export class ConfigStore {
           input.matchDid?.trim() || null,
           input.matchTrunk?.trim() || null,
           input.maxConcurrent ?? 10,
+          input.ivrId ?? null,
           now,
           now,
         );
@@ -216,12 +331,13 @@ export class ConfigStore {
       matchDid: patch.matchDid !== undefined ? patch.matchDid : current.matchDid,
       matchTrunk: patch.matchTrunk !== undefined ? patch.matchTrunk : current.matchTrunk,
       maxConcurrent: patch.maxConcurrent ?? current.maxConcurrent,
+      ivrId: patch.ivrId !== undefined ? patch.ivrId : current.ivrId,
     };
     const now = new Date().toISOString();
     this.runWrite(() => {
       this.requireDb()
         .prepare(
-          `UPDATE call_setups SET name=?, enabled=?, match_did=?, match_trunk=?, max_concurrent=?, updated_at=?
+          `UPDATE call_setups SET name=?, enabled=?, match_did=?, match_trunk=?, max_concurrent=?, ivr_id=?, updated_at=?
            WHERE id=?`,
         )
         .run(
@@ -230,6 +346,7 @@ export class ConfigStore {
           next.matchDid.trim() || null,
           next.matchTrunk.trim() || null,
           next.maxConcurrent,
+          next.ivrId,
           now,
           id,
         );
@@ -242,9 +359,233 @@ export class ConfigStore {
     return updated;
   }
 
+  deleteSetup(id: number, actor: string): void {
+    const current = this.getSetup(id);
+    if (!current) {
+      throw Object.assign(new Error("setup not found"), { code: "NOT_FOUND" });
+    }
+    this.runWrite(() => {
+      this.requireDb().prepare("DELETE FROM call_setups WHERE id = ?").run(id);
+      this.requireDb()
+        .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
+        .run(new Date().toISOString(), actor, "delete_setup", JSON.stringify({ id, name: current.name }));
+    });
+  }
+
+  listIvrs(): Ivr[] {
+    if (!this.db) return [];
+    const heads = this.db.prepare("SELECT * FROM ivrs ORDER BY id").all() as IvrRow[];
+    return heads.map((row) => this.hydrateIvr(row));
+  }
+
+  getIvr(id: number): Ivr | null {
+    if (!this.db) return null;
+    const row = this.db.prepare("SELECT * FROM ivrs WHERE id = ?").get(id) as IvrRow | undefined;
+    return row ? this.hydrateIvr(row) : null;
+  }
+
+  createIvr(input: IvrSaveInput, actor: string): Ivr {
+    const doc = normalizeSave(input);
+    const now = new Date().toISOString();
+    let id = 0;
+    this.runWrite(() => {
+      const db = this.requireDb();
+      const r = db
+        .prepare(
+          "INSERT INTO ivrs (name, enabled, created_at, updated_at, document, entry_key) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          input.name.trim() || "IVR",
+          input.enabled === false ? 0 : 1,
+          now,
+          now,
+          JSON.stringify({ entryKey: doc.entryKey, menus: doc.menus }),
+          doc.entryKey,
+        );
+      id = Number(r.lastInsertRowid);
+      db.prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)").run(
+        now,
+        actor,
+        "create_ivr",
+        JSON.stringify({ id, name: input.name }),
+      );
+    });
+    const created = this.getIvr(id);
+    if (!created) throw new Error("failed to load created ivr");
+    return created;
+  }
+
+  updateIvr(id: number, input: IvrSaveInput, actor: string): Ivr {
+    const current = this.getIvr(id);
+    if (!current) throw Object.assign(new Error("ivr not found"), { code: "NOT_FOUND" });
+    const doc = normalizeSave(input);
+    const now = new Date().toISOString();
+    this.runWrite(() => {
+      const db = this.requireDb();
+      db.prepare("UPDATE ivrs SET name=?, enabled=?, document=?, entry_key=?, updated_at=? WHERE id=?").run(
+        input.name.trim() || current.name,
+        input.enabled === false ? 0 : 1,
+        JSON.stringify({ entryKey: doc.entryKey, menus: doc.menus }),
+        doc.entryKey,
+        now,
+        id,
+      );
+      db.prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)").run(
+        now,
+        actor,
+        "update_ivr",
+        JSON.stringify({ id }),
+      );
+    });
+    const updated = this.getIvr(id);
+    if (!updated) throw new Error("failed to load updated ivr");
+    return updated;
+  }
+
+  deleteIvr(id: number, actor: string): void {
+    const current = this.getIvr(id);
+    if (!current) throw Object.assign(new Error("ivr not found"), { code: "NOT_FOUND" });
+    this.runWrite(() => {
+      const db = this.requireDb();
+      db.prepare("UPDATE call_setups SET ivr_id = NULL WHERE ivr_id = ?").run(id);
+      db.prepare("DELETE FROM ivrs WHERE id = ?").run(id);
+      db.prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)").run(
+        new Date().toISOString(),
+        actor,
+        "delete_ivr",
+        JSON.stringify({ id, name: current.name }),
+      );
+    });
+  }
+
+  private hydrateIvr(row: IvrRow): Ivr {
+    const parsed = parseIvrDocument(row.document, row.entry_key);
+    return {
+      id: row.id,
+      name: row.name,
+      enabled: row.enabled === 1,
+      entryKey: parsed.entryKey,
+      menus: parsed.menus,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  listIvrFunctionCatalog(): IvrFunctionDef[] {
+    const custom = this.listCustomIvrFunctions().map(
+      (f): IvrFunctionDef => ({
+        name: f.name,
+        kind: "pulse",
+        source: "custom",
+        description: f.description,
+        pulseSlot: f.pulseSlot,
+        paramHint: f.paramHint,
+        enabled: f.enabled,
+      }),
+    );
+    return [...GENERIC_FUNCTIONS, ...custom];
+  }
+
+  listCustomIvrFunctions(): IvrCustomFunction[] {
+    if (!this.db) return [];
+    const rows = this.db.prepare("SELECT * FROM ivr_functions ORDER BY name").all() as FnRow[];
+    return rows.map(mapFn);
+  }
+
+  getCustomIvrFunction(id: number): IvrCustomFunction | null {
+    if (!this.db) return null;
+    const row = this.db.prepare("SELECT * FROM ivr_functions WHERE id = ?").get(id) as FnRow | undefined;
+    return row ? mapFn(row) : null;
+  }
+
+  createCustomIvrFunction(input: IvrCustomFunctionInput, actor: string): IvrCustomFunction {
+    const name = normalizeFnName(input.name);
+    if (!name) throw Object.assign(new Error("function name is required"), { code: "BAD_REQUEST" });
+    if (!input.pulseSlot?.trim()) throw Object.assign(new Error("PULSE API is required"), { code: "BAD_REQUEST" });
+    const now = new Date().toISOString();
+    let id = 0;
+    this.runWrite(() => {
+      const db = this.requireDb();
+      try {
+        const r = db
+          .prepare(
+            `INSERT INTO ivr_functions (name, description, pulse_slot, param_hint, enabled, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            name,
+            (input.description ?? "").trim(),
+            input.pulseSlot.trim(),
+            (input.paramHint ?? "").trim(),
+            input.enabled === false ? 0 : 1,
+            now,
+            now,
+          );
+        id = Number(r.lastInsertRowid);
+      } catch (err) {
+        throw Object.assign(new Error("function name already exists"), { code: "CONFLICT", cause: err });
+      }
+      db.prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)").run(
+        now,
+        actor,
+        "create_ivr_function",
+        JSON.stringify({ id, name }),
+      );
+    });
+    const created = this.getCustomIvrFunction(id);
+    if (!created) throw new Error("failed to load function");
+    return created;
+  }
+
+  updateCustomIvrFunction(id: number, input: Partial<IvrCustomFunctionInput>, actor: string): IvrCustomFunction {
+    const current = this.getCustomIvrFunction(id);
+    if (!current) throw Object.assign(new Error("function not found"), { code: "NOT_FOUND" });
+    const name = input.name !== undefined ? normalizeFnName(input.name) : current.name;
+    if (!name) throw Object.assign(new Error("function name is required"), { code: "BAD_REQUEST" });
+    const now = new Date().toISOString();
+    this.runWrite(() => {
+      const db = this.requireDb();
+      db.prepare(
+        `UPDATE ivr_functions SET name=?, description=?, pulse_slot=?, param_hint=?, enabled=?, updated_at=? WHERE id=?`,
+      ).run(
+        name,
+        input.description !== undefined ? input.description.trim() : current.description,
+        input.pulseSlot !== undefined ? input.pulseSlot.trim() : current.pulseSlot,
+        input.paramHint !== undefined ? input.paramHint.trim() : current.paramHint,
+        input.enabled === undefined ? (current.enabled ? 1 : 0) : input.enabled ? 1 : 0,
+        now,
+        id,
+      );
+      db.prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)").run(
+        now,
+        actor,
+        "update_ivr_function",
+        JSON.stringify({ id, name }),
+      );
+    });
+    const updated = this.getCustomIvrFunction(id);
+    if (!updated) throw new Error("failed to load function");
+    return updated;
+  }
+
+  deleteCustomIvrFunction(id: number, actor: string): void {
+    const current = this.getCustomIvrFunction(id);
+    if (!current) throw Object.assign(new Error("function not found"), { code: "NOT_FOUND" });
+    this.runWrite(() => {
+      const db = this.requireDb();
+      db.prepare("DELETE FROM ivr_functions WHERE id = ?").run(id);
+      db.prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)").run(
+        new Date().toISOString(),
+        actor,
+        "delete_ivr_function",
+        JSON.stringify({ id, name: current.name }),
+      );
+    });
+  }
+
   listPulseApis(): PulseApiConfig[] {
     if (!this.db) return [];
-    const rows = this.db.prepare("SELECT * FROM pulse_apis ORDER BY slot").all() as PulseRow[];
+    const rows = this.db.prepare("SELECT * FROM pulse_apis ORDER BY display_name, slot").all() as PulseRow[];
     return rows.map(mapPulse);
   }
 
@@ -254,31 +595,120 @@ export class ConfigStore {
     return row ? mapPulse(row) : null;
   }
 
+  createPulseApi(
+    input: {
+      slot: string;
+      name: string;
+      description?: string;
+      method?: PulseApiConfig["method"];
+      endpoint?: string;
+      timeoutMs?: number;
+      retries?: number;
+      enabled?: boolean;
+      mockEnabled?: boolean;
+      mockJson?: string;
+      mockStatus?: number | null;
+      mockError?: string;
+    },
+    actor: string,
+  ): PulseApiConfig {
+    const slot = normalizeSlot(input.slot);
+    if (!slot) {
+      throw Object.assign(new Error("invalid api id"), { code: "BAD_REQUEST" });
+    }
+    if (this.getPulseApi(slot)) {
+      throw Object.assign(new Error("api id already exists"), { code: "CONFLICT" });
+    }
+    const now = new Date().toISOString();
+    this.runWrite(() => {
+      this.requireDb()
+        .prepare(
+          `INSERT INTO pulse_apis (
+            slot, method, endpoint, timeout_ms, retries, updated_at,
+            display_name, description, mock_enabled, mock_json, mock_status, mock_error, enabled
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          slot,
+          input.method ?? "POST",
+          input.endpoint ?? "",
+          input.timeoutMs ?? 5000,
+          input.retries ?? 0,
+          now,
+          input.name.trim() || slot,
+          input.description ?? "",
+          input.mockEnabled ? 1 : 0,
+          input.mockJson?.trim() || null,
+          input.mockStatus ?? null,
+          input.mockError?.trim() || null,
+          input.enabled === false ? 0 : 1,
+        );
+      this.requireDb()
+        .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
+        .run(now, actor, "create_pulse_api", JSON.stringify({ slot }));
+    });
+    return this.getPulseApi(slot)!;
+  }
+
   putPulseApi(slot: PulseApiSlot, patch: Partial<Omit<PulseApiConfig, "slot" | "updatedAt">>, actor: string): PulseApiConfig {
     const current = this.getPulseApi(slot);
     if (!current) {
-      throw Object.assign(new Error("unknown pulse api slot"), { code: "NOT_FOUND" });
+      throw Object.assign(new Error("unknown pulse api"), { code: "NOT_FOUND" });
     }
     const now = new Date().toISOString();
     const next: PulseApiConfig = {
+      ...current,
+      ...patch,
       slot,
-      method: patch.method ?? current.method,
-      endpoint: patch.endpoint ?? current.endpoint,
-      timeoutMs: patch.timeoutMs ?? current.timeoutMs,
-      retries: patch.retries ?? current.retries,
+      name: patch.name !== undefined ? patch.name : current.name,
+      description: patch.description !== undefined ? patch.description : current.description,
+      mockJson: patch.mockJson !== undefined ? patch.mockJson : current.mockJson,
+      mockError: patch.mockError !== undefined ? patch.mockError : current.mockError,
+      mockStatus: patch.mockStatus !== undefined ? patch.mockStatus : current.mockStatus,
+      mockEnabled: patch.mockEnabled !== undefined ? patch.mockEnabled : current.mockEnabled,
+      enabled: patch.enabled !== undefined ? patch.enabled : current.enabled,
       updatedAt: now,
     };
     this.runWrite(() => {
       this.requireDb()
         .prepare(
-          `UPDATE pulse_apis SET method=?, endpoint=?, timeout_ms=?, retries=?, updated_at=? WHERE slot=?`,
+          `UPDATE pulse_apis SET
+            method=?, endpoint=?, timeout_ms=?, retries=?, updated_at=?,
+            display_name=?, description=?, mock_enabled=?, mock_json=?, mock_status=?, mock_error=?, enabled=?
+           WHERE slot=?`,
         )
-        .run(next.method, next.endpoint, next.timeoutMs, next.retries, now, slot);
+        .run(
+          next.method,
+          next.endpoint,
+          next.timeoutMs,
+          next.retries,
+          now,
+          next.name,
+          next.description,
+          next.mockEnabled ? 1 : 0,
+          next.mockJson || null,
+          next.mockStatus,
+          next.mockError || null,
+          next.enabled ? 1 : 0,
+          slot,
+        );
       this.requireDb()
         .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
         .run(now, actor, "put_pulse_api", JSON.stringify({ slot }));
     });
     return this.getPulseApi(slot)!;
+  }
+
+  deletePulseApi(slot: PulseApiSlot, actor: string): void {
+    if (!this.getPulseApi(slot)) {
+      throw Object.assign(new Error("unknown pulse api"), { code: "NOT_FOUND" });
+    }
+    this.runWrite(() => {
+      this.requireDb().prepare("DELETE FROM pulse_apis WHERE slot = ?").run(slot);
+      this.requireDb()
+        .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
+        .run(new Date().toISOString(), actor, "delete_pulse_api", JSON.stringify({ slot }));
+    });
   }
 
   upsertSession(session: CallSession): void {
@@ -288,8 +718,9 @@ export class ConfigStore {
           .prepare(
             `INSERT INTO call_sessions (
               session_id, unique_id, channel, setup_id, interaction_id, caller_id, did, trunk,
-              state, caller_type, ivr_pointer, customer_json, reject_reason, started_at, ended_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              state, caller_type, ivr_pointer, customer_json, reject_reason, started_at, ended_at,
+              pulse_session_id, agent_id, agent_extension, bridge_id, language, queue_position, expected_wait_sec
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
               unique_id=excluded.unique_id,
               channel=excluded.channel,
@@ -303,10 +734,17 @@ export class ConfigStore {
               ivr_pointer=excluded.ivr_pointer,
               customer_json=excluded.customer_json,
               reject_reason=excluded.reject_reason,
-              ended_at=excluded.ended_at`,
+              ended_at=excluded.ended_at,
+              pulse_session_id=excluded.pulse_session_id,
+              agent_id=excluded.agent_id,
+              agent_extension=excluded.agent_extension,
+              bridge_id=excluded.bridge_id,
+              language=excluded.language,
+              queue_position=excluded.queue_position,
+              expected_wait_sec=excluded.expected_wait_sec`,
           )
           .run(
-            session.sessionId,
+            session.internalId,
             session.uniqueId,
             session.channel,
             session.setupId,
@@ -316,11 +754,18 @@ export class ConfigStore {
             session.trunk,
             session.state,
             session.callerType,
-            session.ivrPointer,
+            session.currentMenu,
             session.customer == null ? null : JSON.stringify(session.customer),
             session.rejectReason,
             session.startedAt,
             session.endedAt,
+            session.pulseSessionId,
+            session.agentId,
+            session.agentExtension,
+            session.bridgeId,
+            session.language,
+            session.queuePosition,
+            session.expectedWaitSec,
           );
       });
     } catch {
@@ -336,6 +781,111 @@ export class ConfigStore {
     return rows.map(mapSession);
   }
 
+  sessionHistory(sinceIso: string): Array<{
+    state: string;
+    rejectReason: string | null;
+    startedAt: string;
+    endedAt: string | null;
+  }> {
+    if (!this.db) return [];
+    const rows = this.db
+      .prepare(
+        "SELECT state, reject_reason, started_at, ended_at FROM call_sessions WHERE started_at >= ? ORDER BY started_at ASC",
+      )
+      .all(sinceIso) as Array<{
+      state: string;
+      reject_reason: string | null;
+      started_at: string;
+      ended_at: string | null;
+    }>;
+    return rows.map((r) => ({
+      state: r.state,
+      rejectReason: r.reject_reason,
+      startedAt: r.started_at,
+      endedAt: r.ended_at,
+    }));
+  }
+
+  authenticateUser(username: string, password: string): AuthUser | null {
+    if (!this.db) return null;
+    const row = this.db.prepare("SELECT * FROM users WHERE username = ?").get(username.trim()) as
+      | UserRow
+      | undefined;
+    if (!row) return null;
+    if (!verifyPassword(password, row.password_hash)) return null;
+    return mapUser(row);
+  }
+
+  getUserById(id: number): AuthUser | null {
+    if (!this.db) return null;
+    const row = this.db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;
+    return row ? mapUser(row) : null;
+  }
+
+  createSession(userId: number, ttlHours = 12): string {
+    const token = newSessionToken();
+    const now = new Date();
+    const expires = new Date(now.getTime() + ttlHours * 3600 * 1000).toISOString();
+    this.runWrite(() => {
+      this.requireDb()
+        .prepare("INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)")
+        .run(token, userId, expires, now.toISOString());
+    });
+    return token;
+  }
+
+  userForSession(token: string): AuthUser | null {
+    if (!this.db || !token) return null;
+    const row = this.db
+      .prepare(
+        `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.token = ? AND s.expires_at > ?`,
+      )
+      .get(token, new Date().toISOString()) as UserRow | undefined;
+    return row ? mapUser(row) : null;
+  }
+
+  deleteSession(token: string): void {
+    if (!token) return;
+    try {
+      this.runWrite(() => {
+        this.requireDb().prepare("DELETE FROM sessions WHERE token = ?").run(token);
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  updatePassword(userId: number, currentPassword: string, nextPassword: string): boolean {
+    if (!this.db) return false;
+    const row = this.db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow | undefined;
+    if (!row || !verifyPassword(currentPassword, row.password_hash)) return false;
+    if (nextPassword.length < 8) return false;
+    const now = new Date().toISOString();
+    this.runWrite(() => {
+      this.requireDb()
+        .prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+        .run(hashPassword(nextPassword), now, userId);
+      this.requireDb().prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+    });
+    return true;
+  }
+
+  private ensureSuperadmin(): void {
+    if (!this.db) return;
+    const count = this.db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number };
+    if (count.n > 0) return;
+    const username = this.env.SUPERADMIN_USER.trim() || "superadmin";
+    const password = this.env.SUPERADMIN_PASSWORD;
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        "INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, 'superadmin', ?, ?)",
+      )
+      .run(username, hashPassword(password), now, now);
+    this.log.info({ component: "auth", username }, "seeded superadmin from env (changeable in UI/DB)");
+  }
+
   private migrate(db: DatabaseSync): void {
     const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as
       | { value: string }
@@ -346,6 +896,76 @@ export class ConfigStore {
       db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2')").run();
       version = 2;
     }
+    if (version < 3) {
+      db.exec(MIGRATION_V3);
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3')").run();
+      version = 3;
+    }
+    if (version < 4) {
+      migratePulseApiColumns(db);
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4')").run();
+      version = 4;
+    }
+    if (version < 5) {
+      migratePulseApiColumns(db);
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '5')").run();
+      version = 5;
+    }
+    if (version < 6) {
+      db.exec(MIGRATION_V6);
+      try {
+        db.exec("ALTER TABLE call_setups ADD COLUMN ivr_id INTEGER");
+      } catch {
+        // already present
+      }
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '6')").run();
+      version = 6;
+    }
+    if (version < 7) {
+      try {
+        db.exec(MIGRATION_V7);
+      } catch {
+        try {
+          db.exec("ALTER TABLE ivrs ADD COLUMN document TEXT NOT NULL DEFAULT '{}'");
+        } catch {
+          /* already present */
+        }
+        try {
+          db.exec("ALTER TABLE ivrs ADD COLUMN entry_key TEXT NOT NULL DEFAULT ''");
+        } catch {
+          /* already present */
+        }
+        db.exec(`CREATE TABLE IF NOT EXISTS ivr_functions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          description TEXT NOT NULL DEFAULT '',
+          pulse_slot TEXT NOT NULL,
+          param_hint TEXT NOT NULL DEFAULT '',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`);
+      }
+      convertLegacyIvrs(db);
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '7')").run();
+      version = 7;
+    }
+    if (version < 8) {
+      for (const stmt of MIGRATION_V8.split(";").map((s) => s.trim()).filter(Boolean)) {
+        try {
+          db.exec(`${stmt};`);
+        } catch {
+          /* column already present */
+        }
+      }
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '8')").run();
+      version = 8;
+    }
+    if (version < 9) {
+      db.exec(MIGRATION_V9);
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '9')").run();
+      version = 9;
+    }
   }
 
   private ensureCallMgmtSeed(): void {
@@ -353,12 +973,170 @@ export class ConfigStore {
     const now = new Date().toISOString();
     this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('telephony_desired', 'connect')").run();
     this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('telephony_retry_delay_ms', '5000')").run();
-    const slots: PulseApiSlot[] = ["preAnswer", "startSession"];
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('telephony_ami_connect_timeout_ms', '8000')")
+      .run();
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('telephony_ari_connect_timeout_ms', '8000')")
+      .run();
+    const setting = (key: string): string | undefined => {
+      const row = this.db!.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+      return row?.value;
+    };
+    const legacyDesired = setting("telephony_desired") === "disconnect" ? "disconnect" : "connect";
+    const legacyRetry = setting("telephony_retry_delay_ms") ?? "5000";
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('telephony_ami_desired', ?)")
+      .run(legacyDesired);
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('telephony_ari_desired', ?)")
+      .run(legacyDesired);
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('telephony_ami_retry_delay_ms', ?)")
+      .run(legacyRetry);
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('telephony_ari_retry_delay_ms', ?)")
+      .run(legacyRetry);
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('iim_owned_ext_from', ?)")
+      .run(String(DEFAULT_OWNED_EXT_FROM));
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('iim_owned_ext_to', ?)")
+      .run(String(DEFAULT_OWNED_EXT_TO));
+    if (setting("iim_owned_ext_from") === "300" && setting("iim_owned_ext_to") === "399") {
+      this.db.prepare("UPDATE settings SET value = ? WHERE key = 'iim_owned_ext_from'").run(String(DEFAULT_OWNED_EXT_FROM));
+      this.db.prepare("UPDATE settings SET value = ? WHERE key = 'iim_owned_ext_to'").run(String(DEFAULT_OWNED_EXT_TO));
+    }
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('pulse_swagger_url', ?)")
+      .run("https://petstore.swagger.io/");
+    const seeds: Array<{
+      slot: string;
+      name: string;
+      description: string;
+      mockJson: string;
+      mockStatus: number;
+    }> = [
+      {
+        slot: "preAnswer",
+        name: "Pre-answer",
+        description: "Before answer: send CallerID, DID, trunk. Expect interactionId or rejectReason.",
+        mockJson: JSON.stringify({ interactionId: "int-sample-001", accept: true }, null, 2),
+        mockStatus: 200,
+      },
+      {
+        slot: "startSession",
+        name: "Start session",
+        description: "After interaction: return PULSE session id, caller type, and customer snapshot.",
+        mockJson: JSON.stringify(
+          {
+            customer: { id: "cust-1001", name: "Sample Customer", ani: "03001234567" },
+            callerType: "existing",
+            currentMenu: "main-menu",
+            pulseSessionId: "sess-sample-001",
+          },
+          null,
+          2,
+        ),
+        mockStatus: 200,
+      },
+      {
+        slot: "enqueue",
+        name: "Enqueue",
+        description: "Place the caller in a PULSE queue.",
+        mockJson: JSON.stringify({ queueId: "sales", position: 3, estimatedWaitSec: 45 }, null, 2),
+        mockStatus: 200,
+      },
+      {
+        slot: "agentConnect",
+        name: "Agent connect",
+        description: "An agent answered the live call.",
+        mockJson: JSON.stringify({ agentId: "ag-42", agentName: "Sample Agent", extension: "1001" }, null, 2),
+        mockStatus: 200,
+      },
+      {
+        slot: "hold",
+        name: "Hold",
+        description: "Caller placed on hold.",
+        mockJson: JSON.stringify({ ok: true }, null, 2),
+        mockStatus: 200,
+      },
+      {
+        slot: "transfer",
+        name: "Transfer",
+        description: "Blind or attended transfer to another destination.",
+        mockJson: JSON.stringify({ ok: true, target: "8001" }, null, 2),
+        mockStatus: 200,
+      },
+      {
+        slot: "hangup",
+        name: "Hangup / wrap-up",
+        description: "Call ended; send duration and last state.",
+        mockJson: JSON.stringify({ ok: true }, null, 2),
+        mockStatus: 200,
+      },
+      {
+        slot: "ivrStep",
+        name: "IVR step",
+        description: "Notify PULSE of an IVR menu choice.",
+        mockJson: JSON.stringify({ nextPointer: "billing" }, null, 2),
+        mockStatus: 200,
+      },
+    ];
     const ins = this.db.prepare(
-      `INSERT OR IGNORE INTO pulse_apis (slot, method, endpoint, timeout_ms, retries, updated_at)
-       VALUES (?, 'POST', '', 5000, 0, ?)`,
+      `INSERT OR IGNORE INTO pulse_apis (
+        slot, method, endpoint, timeout_ms, retries, updated_at,
+        display_name, description, mock_enabled, mock_json, mock_status, mock_error, enabled
+      ) VALUES (?, 'POST', '', 5000, 0, ?, ?, ?, 0, ?, ?, NULL, 1)`,
     );
-    for (const slot of slots) ins.run(slot, now);
+    const fillMock = this.db.prepare(
+      `UPDATE pulse_apis SET mock_json = ?, mock_status = ?
+       WHERE slot = ? AND (mock_json IS NULL OR mock_json = '')`,
+    );
+    const fillName = this.db.prepare(
+      `UPDATE pulse_apis SET display_name = ? WHERE slot = ? AND (display_name IS NULL OR display_name = '')`,
+    );
+    for (const s of seeds) {
+      ins.run(s.slot, now, s.name, s.description, s.mockJson, s.mockStatus);
+      fillMock.run(s.mockJson, s.mockStatus, s.slot);
+      fillName.run(s.name, s.slot);
+    }
+    const ivrCount = this.db.prepare("SELECT COUNT(*) AS n FROM ivrs").get() as { n: number };
+    if (ivrCount.n === 0) {
+      this.createIvr(LAB_IVR_SEED, "seed");
+      this.createIvr(PULSE_IVR_SEED, "seed");
+    }
+    this.ensureIvrAnswerSteps();
+  }
+
+  private ensureIvrAnswerSteps(): void {
+    for (const ivr of this.listIvrs()) {
+      const hasAnswer = ivr.menus.some((m) => m.options.some((o) => o.action.toLowerCase() === "answer"));
+      if (hasAnswer || !ivr.menus.length) continue;
+      const entry = ivr.entryKey || ivr.menus[0]!.key;
+      this.updateIvr(
+        ivr.id,
+        {
+          name: ivr.name,
+          enabled: ivr.enabled,
+          entryKey: "answer",
+          menus: [
+            {
+              key: "answer",
+              name: "Answer",
+              description: "Answer before prompts",
+              fileMenu: "none",
+              inputTimeout: 0,
+              retries: 0,
+              isEntry: true,
+              options: [{ when: "none", action: "answer", success: `GOTO_MENU ${entry}`, fail: "hangup" }],
+            },
+            ...ivr.menus.map((m) => ({ ...m, isEntry: false })),
+          ],
+        },
+        "seed",
+      );
+    }
   }
 
   private runWrite(fn: () => void): void {
@@ -468,17 +1246,25 @@ type SetupRow = {
   match_did: string | null;
   match_trunk: string | null;
   max_concurrent: number;
+  ivr_id?: number | null;
   created_at: string;
   updated_at: string;
 };
 
 type PulseRow = {
-  slot: PulseApiSlot;
+  slot: string;
   method: PulseApiConfig["method"];
   endpoint: string;
   timeout_ms: number;
   retries: number;
   updated_at: string;
+  display_name?: string;
+  description?: string;
+  mock_enabled?: number;
+  mock_json?: string | null;
+  mock_status?: number | null;
+  mock_error?: string | null;
+  enabled?: number;
 };
 
 type SessionRow = {
@@ -497,6 +1283,258 @@ type SessionRow = {
   reject_reason: string | null;
   started_at: string;
   ended_at: string | null;
+  pulse_session_id?: string | null;
+  agent_id?: string | null;
+  agent_extension?: string | null;
+  bridge_id?: string | null;
+  language?: number | null;
+  queue_position?: number | null;
+  expected_wait_sec?: number | null;
+};
+
+type IvrRow = {
+  id: number;
+  name: string;
+  enabled: number;
+  entry_menu_id: number | null;
+  document?: string | null;
+  entry_key?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type FnRow = {
+  id: number;
+  name: string;
+  description: string;
+  pulse_slot: string;
+  param_hint: string;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapFn(row: FnRow): IvrCustomFunction {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    pulseSlot: row.pulse_slot,
+    paramHint: row.param_hint,
+    enabled: row.enabled === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function normalizeFnName(raw: string): string {
+  return raw.trim().replace(/\s+/g, "_");
+}
+
+function parseIvrDocument(raw: string | null | undefined, entryKey: string | null | undefined): {
+  entryKey: string;
+  menus: IvrMenu[];
+} {
+  if (!raw || raw === "{}") return { entryKey: entryKey ?? "", menus: [] };
+  try {
+    const parsed = JSON.parse(raw) as { entryKey?: string; menus?: IvrMenu[] };
+    const menus = Array.isArray(parsed.menus) ? parsed.menus : [];
+    return { entryKey: parsed.entryKey || entryKey || menus[0]?.key || "", menus };
+  } catch {
+    return { entryKey: entryKey ?? "", menus: [] };
+  }
+}
+
+function convertLegacyIvrs(db: DatabaseSync): void {
+  const hasMenus = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ivr_menus'").get() as
+    | { name: string }
+    | undefined;
+  if (!hasMenus) return;
+  const heads = db.prepare("SELECT * FROM ivrs").all() as IvrRow[];
+  for (const row of heads) {
+    const existing = parseIvrDocument(row.document, row.entry_key);
+    if (existing.menus.length) continue;
+    const menus = db
+      .prepare("SELECT * FROM ivr_menus WHERE ivr_id = ? ORDER BY sort_order, id")
+      .all(row.id) as Array<{
+      id: number;
+      name: string;
+      prompt_sound: string;
+      invalid_sound: string;
+      timeout_sec: number;
+      max_no_input: number;
+      on_no_input: string;
+      on_no_input_menu_id: number | null;
+      on_max_no_input: string;
+      on_max_no_input_menu_id: number | null;
+      on_max_invalid: string;
+      on_max_invalid_menu_id: number | null;
+    }>;
+    if (!menus.length) continue;
+    const options = db
+      .prepare(
+        `SELECT o.* FROM ivr_options o JOIN ivr_menus m ON m.id = o.menu_id WHERE m.ivr_id = ? ORDER BY o.sort_order`,
+      )
+      .all(row.id) as Array<{ menu_id: number; digits: string; action: string; target_menu_id: number | null }>;
+    const keyOf = (id: number) => `m${id}`;
+    const converted: IvrMenu[] = menus.map((m) => {
+      const opts = options.filter((o) => o.menu_id === m.id).map((o) => ({
+        when: o.digits,
+        action: o.action === "hangup" ? "hangup" : "goto",
+        param: "",
+        success: o.action === "hangup" ? "hangup" : o.target_menu_id ? `GOTO_MENU ${keyOf(o.target_menu_id)}` : "",
+        fail: o.action === "hangup" ? "hangup" : o.target_menu_id ? `GOTO_MENU ${keyOf(o.target_menu_id)}` : "",
+      }));
+      opts.push({
+        when: "none",
+        action: m.on_no_input === "hangup" ? "hangup" : m.on_no_input === "goto" ? "goto" : "repeat",
+        param: "",
+        success:
+          m.on_no_input === "hangup"
+            ? "hangup"
+            : m.on_no_input_menu_id
+              ? `GOTO_MENU ${keyOf(m.on_no_input_menu_id)}`
+              : "repeat",
+        fail: "hangup",
+      });
+      opts.push({
+        when: "MaxTries",
+        action: m.on_max_no_input === "goto" ? "goto" : "hangup",
+        param: "",
+        success: m.on_max_no_input_menu_id ? `GOTO_MENU ${keyOf(m.on_max_no_input_menu_id)}` : "hangup",
+        fail: "hangup",
+      });
+      return {
+        key: keyOf(m.id),
+        name: m.name,
+        description: "",
+        fileMenu: m.prompt_sound || "",
+        interrupt: "",
+        fileInvalid: m.invalid_sound || "",
+        inputTimeout: m.timeout_sec || 5,
+        retries: m.max_no_input || 3,
+        options: opts,
+      };
+    });
+    const entry = menus.find((m) => m.id === row.entry_menu_id) ?? menus[0];
+    let entryKey = entry ? keyOf(entry.id) : converted[0]!.key;
+    const hasAnswer = converted.some((m) => m.options.some((o) => o.action.toLowerCase() === "answer"));
+    if (!hasAnswer) {
+      converted.unshift({
+        key: "answer",
+        name: "Answer",
+        description: "Added on import — IIM no longer answers before the IVR",
+        fileMenu: "none",
+        interrupt: "",
+        fileInvalid: "",
+        inputTimeout: 0,
+        retries: 0,
+        options: [{ when: "none", action: "answer", param: "", success: `GOTO_MENU ${entryKey}`, fail: "hangup" }],
+      });
+      entryKey = "answer";
+    }
+    db.prepare("UPDATE ivrs SET document=?, entry_key=? WHERE id=?").run(
+      JSON.stringify({ entryKey, menus: converted }),
+      entryKey,
+      row.id,
+    );
+  }
+}
+
+const LAB_IVR_SEED: IvrSaveInput = {
+  name: "Lab IVR",
+  enabled: true,
+  entryKey: "1",
+  menus: [
+    {
+      key: "1",
+      name: "Answer",
+      fileMenu: "none",
+      inputTimeout: 0,
+      retries: 0,
+      isEntry: true,
+      options: [{ when: "none", action: "answer", success: "GOTO_MENU 2", fail: "hangup" }],
+    },
+    {
+      key: "2",
+      name: "Greeting",
+      fileMenu: "hello-world A",
+      inputTimeout: 0,
+      retries: 0,
+      options: [{ when: "none", action: "goto", success: "GOTO_MENU 3", fail: "GOTO_MENU 3" }],
+    },
+    {
+      key: "3",
+      name: "Main",
+      fileMenu: "hello-world",
+      fileInvalid: "invalid",
+      inputTimeout: 5,
+      retries: 3,
+      options: [
+        { when: "1", action: "repeat", success: "repeat", fail: "repeat" },
+        { when: "2", action: "hangup", success: "hangup", fail: "hangup" },
+        { when: "none", action: "repeat", success: "repeat", fail: "repeat" },
+        { when: "MaxTries", action: "hangup", success: "hangup", fail: "hangup" },
+      ],
+    },
+  ],
+};
+
+const PULSE_IVR_SEED: IvrSaveInput = {
+  name: "PULSE starter",
+  enabled: true,
+  entryKey: "1",
+  menus: [
+    {
+      key: "1",
+      name: "Create interaction",
+      fileMenu: "none",
+      inputTimeout: 0,
+      retries: 0,
+      isEntry: true,
+      options: [
+        { when: "none", action: "proc_createinteraction", success: "GOTO_MENU 1.1", fail: "hangup" },
+      ],
+    },
+    {
+      key: "1.1",
+      name: "Create session",
+      fileMenu: "none",
+      inputTimeout: 0,
+      retries: 0,
+      options: [{ when: "none", action: "proc_createsession", success: "GOTO_MENU 2", fail: "hangup" }],
+    },
+    {
+      key: "2",
+      name: "Answer",
+      fileMenu: "none",
+      inputTimeout: 0,
+      retries: 0,
+      options: [{ when: "none", action: "answer", success: "GOTO_MENU 3", fail: "hangup" }],
+    },
+    {
+      key: "3",
+      name: "Greeting",
+      fileMenu: "hello-world A",
+      inputTimeout: 0,
+      retries: 0,
+      options: [{ when: "none", action: "goto", success: "GOTO_MENU 4", fail: "GOTO_MENU 4" }],
+    },
+    {
+      key: "4",
+      name: "Main",
+      fileMenu: "hello-world",
+      fileInvalid: "invalid",
+      inputTimeout: 5,
+      retries: 3,
+      options: [
+        { when: "1", action: "repeat", success: "repeat", fail: "repeat" },
+        { when: "2", action: "hangup", success: "hangup", fail: "hangup" },
+        { when: "none", action: "repeat", success: "repeat", fail: "repeat" },
+        { when: "MaxTries", action: "hangup", success: "hangup", fail: "hangup" },
+      ],
+    },
+  ],
 };
 
 function mapSetup(row: SetupRow): CallSetup {
@@ -507,6 +1545,7 @@ function mapSetup(row: SetupRow): CallSetup {
     matchDid: row.match_did ?? "",
     matchTrunk: row.match_trunk ?? "",
     maxConcurrent: row.max_concurrent,
+    ivrId: row.ivr_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -515,12 +1554,42 @@ function mapSetup(row: SetupRow): CallSetup {
 function mapPulse(row: PulseRow): PulseApiConfig {
   return {
     slot: row.slot,
+    name: row.display_name || row.slot,
+    description: row.description ?? "",
     method: row.method,
     endpoint: row.endpoint,
     timeoutMs: row.timeout_ms,
     retries: row.retries,
+    mockEnabled: row.mock_enabled === 1,
+    mockJson: row.mock_json ?? "",
+    mockStatus: row.mock_status ?? null,
+    mockError: row.mock_error ?? "",
+    enabled: row.enabled !== 0,
     updatedAt: row.updated_at,
   };
+}
+
+function normalizeSlot(raw: string): string {
+  const slot = raw.trim();
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(slot)) return "";
+  return slot;
+}
+
+function migratePulseApiColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(pulse_apis)").all() as Array<{ name: string }>;
+  const have = new Set(cols.map((c) => c.name));
+  const add: Array<[string, string]> = [
+    ["display_name", "TEXT NOT NULL DEFAULT ''"],
+    ["description", "TEXT NOT NULL DEFAULT ''"],
+    ["mock_enabled", "INTEGER NOT NULL DEFAULT 0"],
+    ["mock_json", "TEXT"],
+    ["mock_status", "INTEGER"],
+    ["mock_error", "TEXT"],
+    ["enabled", "INTEGER NOT NULL DEFAULT 1"],
+  ];
+  for (const [name, spec] of add) {
+    if (!have.has(name)) db.exec(`ALTER TABLE pulse_apis ADD COLUMN ${name} ${spec}`);
+  }
 }
 
 function mapSession(row: SessionRow): CallSession {
@@ -533,20 +1602,80 @@ function mapSession(row: SessionRow): CallSession {
     }
   }
   return {
-    sessionId: row.session_id,
+    internalId: row.session_id,
     uniqueId: row.unique_id ?? "",
     channel: row.channel ?? "",
+    bridgeId: row.bridge_id ?? null,
     setupId: row.setup_id,
     interactionId: row.interaction_id,
+    pulseSessionId: row.pulse_session_id ?? null,
+    agentId: row.agent_id ?? null,
+    agentExtension: row.agent_extension ?? null,
     callerId: row.caller_id ?? "",
     did: row.did ?? "",
     trunk: row.trunk ?? "",
     state: row.state,
+    language: parseCallerLanguage(row.language ?? 0),
+    currentMenu: row.ivr_pointer,
+    queuePosition: row.queue_position ?? null,
+    expectedWaitSec: row.expected_wait_sec ?? null,
     callerType: row.caller_type,
-    ivrPointer: row.ivr_pointer,
     customer,
     rejectReason: row.reject_reason,
     startedAt: row.started_at,
     endedAt: row.ended_at,
+  };
+}
+
+type UserRow = {
+  id: number;
+  username: string;
+  password_hash: string;
+  role: string;
+  created_at: string;
+  updated_at: string;
+};
+
+function normalizeHttpUrl(raw: string): string {
+  const value = raw.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw Object.assign(new Error("URL must be http:// or https:// (host, port, and path are allowed)"), {
+      code: "BAD_REQUEST",
+    });
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw Object.assign(new Error("URL must be http:// or https://"), { code: "BAD_REQUEST" });
+  }
+  return parsed.toString();
+}
+
+function mapStation(row: StationRowDb): StationDirectory {
+  return {
+    extension: row.extension,
+    displayName: row.display_name,
+    agentId: row.agent_id,
+    notes: row.notes,
+    updatedAt: row.updated_at,
+  };
+}
+
+type StationRowDb = {
+  extension: string;
+  display_name: string;
+  agent_id: string;
+  notes: string;
+  updated_at: string;
+};
+
+function mapUser(row: UserRow): AuthUser {
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }

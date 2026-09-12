@@ -1,5 +1,5 @@
 import { loadEnv } from "./config/env.js";
-import { createLogger } from "./logging.js";
+import { closeFileLogging, createLogger } from "./logging/index.js";
 import { ConfigStore } from "./db/sqlite.js";
 import { Supervisor } from "./asterisk/supervisor.js";
 import { buildApp } from "./http/app.js";
@@ -7,7 +7,17 @@ import { createProcessHealth, installProcessGuards } from "./processGuards.js";
 
 async function main(): Promise<void> {
   const env = loadEnv();
-  const log = createLogger(env.LOG_LEVEL);
+  const log = createLogger(env);
+  log.info(
+    {
+      component: "process",
+      pid: process.pid,
+      node: process.version,
+      host: env.HOST,
+      port: env.PORT,
+    },
+    "process startup",
+  );
   const processHealth = createProcessHealth();
   installProcessGuards(log, processHealth);
 
@@ -21,7 +31,7 @@ async function main(): Promise<void> {
   try {
     await app.listen({ host: env.HOST, port: env.PORT });
     log.info(
-      { component: "http", host: env.HOST, port: env.PORT, docs: `http://${env.HOST}:${env.PORT}/docs` },
+      { component: "http", host: env.HOST, port: env.PORT, ui: `http://${env.HOST}:${env.PORT}/`, docs: `http://${env.HOST}:${env.PORT}/docs` },
       "http listening (asterisk links start next)",
     );
   } catch (err) {
@@ -36,8 +46,10 @@ async function main(): Promise<void> {
     log.error({ component: "supervisor", err }, "supervisor start failed — http stays up");
   }
 
+  log.info({ component: "process", host: env.HOST, port: env.PORT }, "startup complete");
+
   const shutdown = async (signal: string) => {
-    log.info({ component: "process", signal }, "shutdown");
+    log.info({ component: "process", signal }, "process shutdown");
     try {
       supervisor.stop();
     } catch (err) {
@@ -47,6 +59,11 @@ async function main(): Promise<void> {
       await app.close();
     } catch (err) {
       log.error({ component: "http", err }, "http close error");
+    }
+    try {
+      await closeFileLogging();
+    } catch (err) {
+      log.error({ component: "logging", err }, "log file close error");
     }
     process.exit(0);
   };

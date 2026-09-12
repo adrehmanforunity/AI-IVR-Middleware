@@ -1,8 +1,7 @@
 import { EventEmitter } from "node:events";
 import net from "node:net";
-import type { Logger } from "../logging.js";
+import { writeAmiLog, type Logger } from "../logging/index.js";
 import {
-  backoffDelay,
   emptyLinkStatus,
   type AsteriskTarget,
   type LinkStatus,
@@ -20,8 +19,10 @@ export class AmiClient extends EventEmitter {
   private target: AsteriskTarget | null = null;
   private loginSent = false;
   private actionSeq = 1;
+  private pingTimer: NodeJS.Timeout | null = null;
 
   private retryDelayMs = 5000;
+  private connectTimeoutMs = 8000;
 
   constructor(private readonly log: Logger) {
     super();
@@ -32,13 +33,15 @@ export class AmiClient extends EventEmitter {
     this.retryDelayMs = Math.max(500, ms);
   }
 
-  hangup(channel: string, cause = "17"): void {
-    this.sendAction({ Action: "Hangup", Channel: channel, Cause: cause });
+  setConnectTimeoutMs(ms: number): void {
+    this.connectTimeoutMs = Math.max(500, ms);
   }
 
   start(target: AsteriskTarget): void {
     this.target = target;
     this.stopped = false;
+    this.attempt = 0;
+    this.status.nextRetryAt = null;
     this.connect();
   }
 
@@ -47,6 +50,7 @@ export class AmiClient extends EventEmitter {
     this.clearReconnect();
     this.teardownSocket();
     this.status.state = "stopped";
+    this.emit("journal", { level: "info", message: "Stopped — no retry" });
   }
 
   updateTarget(target: AsteriskTarget): void {
@@ -54,7 +58,7 @@ export class AmiClient extends EventEmitter {
   }
 
   ping(): void {
-    this.sendAction({ Action: "Ping" });
+    this.sendAction({ Action: "Ping", ActionID: "keepalive" });
   }
 
   private connect(): void {
@@ -62,8 +66,11 @@ export class AmiClient extends EventEmitter {
     this.clearReconnect();
     this.teardownSocket();
     this.status.state = "connecting";
+    this.status.nextRetryAt = null;
     const { host, amiPort } = this.target;
-    this.log.info({ component: "ami", host, port: amiPort }, "ami connecting");
+    this.log.info({ component: "ami", host, port: amiPort, timeoutMs: this.connectTimeoutMs }, "ami connecting");
+    writeAmiLog("meta", `tcp connect ${host}:${amiPort} timeout=${this.connectTimeoutMs}ms`);
+    this.emit("journal", { level: "info", message: `Connecting ${host}:${amiPort}` });
 
     const socket = net.connect({ host, port: amiPort });
     this.socket = socket;
@@ -71,10 +78,13 @@ export class AmiClient extends EventEmitter {
     this.loginSent = false;
 
     socket.setKeepAlive(true, 15_000);
-    socket.setTimeout(30_000);
+    socket.setTimeout(this.connectTimeoutMs);
 
     socket.on("connect", () => {
+      socket.setTimeout(30_000);
       this.log.debug({ component: "ami" }, "ami tcp connected, waiting for banner");
+      writeAmiLog("meta", "tcp connected, waiting for banner");
+      this.emit("journal", { level: "info", message: `TCP connected ${host}:${amiPort}` });
     });
 
     socket.on("data", (chunk) => {
@@ -86,7 +96,7 @@ export class AmiClient extends EventEmitter {
     });
 
     socket.on("timeout", () => {
-      this.fail("ami socket idle timeout");
+      this.fail("ami connect/idle timeout");
     });
 
     socket.on("error", (err) => {
@@ -94,11 +104,10 @@ export class AmiClient extends EventEmitter {
     });
 
     socket.on("close", () => {
-      if (this.socket !== socket || this.stopped) return;
-      if (this.status.state !== "disconnected") {
+      if (this.stopped) return;
+      if (this.socket === socket) {
         this.fail(this.status.lastError ?? "ami socket closed");
       }
-      this.scheduleReconnect();
     });
   }
 
@@ -111,6 +120,7 @@ export class AmiClient extends EventEmitter {
       const banner = this.buffer.slice(0, firstNl);
       this.buffer = this.buffer.slice(firstNl + 1);
       if (banner.startsWith("Asterisk Call Manager")) {
+        writeAmiLog("in", banner);
         this.sendLogin();
       }
     }
@@ -121,6 +131,7 @@ export class AmiClient extends EventEmitter {
       this.buffer = this.buffer.slice(idx + 2);
       if (!raw.trim()) continue;
       const msg = parseAmi(raw);
+      if (msg.ActionID !== "keepalive") writeAmiLog("in", raw);
       this.handleMessage(msg);
     }
   }
@@ -132,7 +143,7 @@ export class AmiClient extends EventEmitter {
       Action: "Login",
       Username: this.target.amiUser,
       Secret: this.target.amiPassword,
-      Events: "on",
+      Events: "off",
       ActionID: "login",
     });
   }
@@ -143,6 +154,7 @@ export class AmiClient extends EventEmitter {
     const event = msg.Event;
 
     if (response) {
+      if (msg.ActionID === "keepalive") return;
       if (msg.ActionID === "login" || (this.status.state === "connecting" && response)) {
         if (response === "Success") {
           this.attempt = 0;
@@ -150,11 +162,12 @@ export class AmiClient extends EventEmitter {
           this.status.lastConnectedAt = new Date().toISOString();
           this.status.lastError = null;
           this.log.info({ component: "ami" }, "ami authenticated");
+          this.socket?.setTimeout(0);
+          this.emit("journal", { level: "info", message: "Authenticated (idle — Events off, not used for calls)" });
           this.emit("connected");
+          this.startPing();
         } else {
           this.fail(msg.Message ?? "ami login failed");
-          this.teardownSocket();
-          this.scheduleReconnect();
         }
       }
       this.emit("response", msg);
@@ -166,6 +179,18 @@ export class AmiClient extends EventEmitter {
     }
   }
 
+  private startPing(): void {
+    this.clearPing();
+    this.pingTimer = setInterval(() => this.ping(), 20_000);
+  }
+
+  private clearPing(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
   private sendAction(fields: AmiMessage): void {
     const sock = this.socket;
     if (!sock || sock.destroyed) return;
@@ -173,26 +198,37 @@ export class AmiClient extends EventEmitter {
     const lines = Object.entries({ ...fields, ActionID: actionId }).map(
       ([k, v]) => `${k}: ${v}`,
     );
-    sock.write(`${lines.join("\r\n")}\r\n\r\n`);
+    const packet = `${lines.join("\r\n")}\r\n\r\n`;
+    if (fields.Action !== "Ping") writeAmiLog("out", lines.join("\n"));
+    sock.write(packet);
   }
 
   private fail(message: string): void {
+    if (this.stopped) return;
+    const same = this.status.lastError === message && this.status.state === "disconnected" && this.reconnectTimer;
     this.status.lastError = message;
-    if (this.status.state === "connected" || this.status.state === "connecting") {
-      this.status.state = "disconnected";
+    this.status.state = "disconnected";
+    if (!same) {
+      this.log.warn({ component: "ami", err: message }, "ami disconnected");
+      writeAmiLog("meta", `disconnected ${message}`);
+      this.emit("journal", { level: "warn", message });
     }
-    this.log.warn({ component: "ami", err: message }, "ami disconnected");
+    this.teardownSocket();
+    this.scheduleReconnect();
   }
 
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return;
     this.status.state = "disconnected";
     this.status.reconnectCount += 1;
-    const delay = backoffDelay(this.attempt, this.retryDelayMs);
+    const delay = Math.max(500, this.retryDelayMs);
     this.attempt += 1;
+    this.status.nextRetryAt = new Date(Date.now() + delay).toISOString();
     this.log.warn({ component: "ami", delayMs: delay, attempt: this.attempt }, "ami reconnect scheduled");
+    this.emit("journal", { level: "warn", message: `Auto-reconnect in ${delay}ms (attempt ${this.attempt})` });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
+      this.status.nextRetryAt = null;
       this.connect();
     }, delay);
   }
@@ -205,6 +241,7 @@ export class AmiClient extends EventEmitter {
   }
 
   private teardownSocket(): void {
+    this.clearPing();
     const sock = this.socket;
     this.socket = null;
     this.loginSent = false;

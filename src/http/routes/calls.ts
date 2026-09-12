@@ -12,7 +12,7 @@ export async function registerCallRoutes(
     {
       schema: {
         tags: ["calls"],
-        summary: "Live call sessions (progress + caller snapshot)",
+        summary: "Live calls (IIM internal id, PULSE ids, language, menu, queue)",
         security: [{ apiKey: [] }],
       },
     },

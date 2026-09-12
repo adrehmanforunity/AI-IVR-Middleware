@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ConfigStore } from "../db/sqlite.js";
 import type { CallSession, CallSetup, RejectReason } from "../domain/types.js";
+import { newCallProgress } from "./progress.js";
 
 export type SetupLive = CallSetup & {
   activeCount: number;
@@ -9,12 +10,12 @@ export type SetupLive = CallSetup & {
 
 export class CallRegistry {
   private readonly byUnique = new Map<string, CallSession>();
-  private readonly bySession = new Map<string, CallSession>();
+  private readonly byInternal = new Map<string, CallSession>();
 
   constructor(private readonly store: ConfigStore) {}
 
   listActive(): CallSession[] {
-    return [...this.bySession.values()].filter((s) => s.state !== "ended" && s.state !== "rejected");
+    return [...this.byInternal.values()].filter((s) => s.state !== "ended" && s.state !== "rejected");
   }
 
   getByUnique(uniqueId: string): CallSession | undefined {
@@ -61,7 +62,7 @@ export class CallRegistry {
     }
     const now = new Date().toISOString();
     const session: CallSession = {
-      sessionId: randomUUID(),
+      internalId: randomUUID(),
       uniqueId: input.uniqueId,
       channel: input.channel,
       setupId: input.setup.id,
@@ -71,21 +72,21 @@ export class CallRegistry {
       trunk: input.trunk,
       state: "ringing",
       callerType: null,
-      ivrPointer: null,
       customer: null,
       rejectReason: null,
       startedAt: now,
       endedAt: null,
+      ...newCallProgress(),
     };
     this.byUnique.set(session.uniqueId, session);
-    this.bySession.set(session.sessionId, session);
+    this.byInternal.set(session.internalId, session);
     this.store.upsertSession(session);
     return { session };
   }
 
   update(session: CallSession): void {
     this.byUnique.set(session.uniqueId, session);
-    this.bySession.set(session.sessionId, session);
+    this.byInternal.set(session.internalId, session);
     this.store.upsertSession(session);
   }
 
@@ -98,7 +99,7 @@ export class CallRegistry {
     session.endedAt = new Date().toISOString();
     this.store.upsertSession(session);
     this.byUnique.delete(uniqueId);
-    this.bySession.delete(session.sessionId);
+    this.byInternal.delete(session.internalId);
     return session;
   }
 }

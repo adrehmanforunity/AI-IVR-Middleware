@@ -11,6 +11,7 @@ export type LinkStatus = {
   lastError: string | null;
   reconnectCount: number;
   lastEventAt: string | null;
+  nextRetryAt: string | null;
 };
 
 export function emptyLinkStatus(): LinkStatus {
@@ -20,6 +21,7 @@ export function emptyLinkStatus(): LinkStatus {
     lastError: null,
     reconnectCount: 0,
     lastEventAt: null,
+    nextRetryAt: null,
   };
 }
 
@@ -37,8 +39,10 @@ export type AsteriskTarget = {
 
 export const BACKOFF_MS = [1000, 2000, 5000, 15000, 30000] as const;
 
+export function retryDelay(baseMs: number): number {
+  return Math.max(500, baseMs);
+}
+
 export function backoffDelay(attempt: number, baseMs = 1000): number {
-  const stepped = Math.min(baseMs * 2 ** Math.min(attempt, 4), 30_000);
-  const jitter = 0.8 + Math.random() * 0.4;
-  return Math.round(stepped * jitter);
+  return retryDelay(baseMs);
 }
