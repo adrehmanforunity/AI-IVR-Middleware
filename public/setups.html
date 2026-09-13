@@ -3,58 +3,57 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Call setups — IIM</title>
-    <link rel="stylesheet" href="/css/iim.css?v=2" />
+    <title>Inbound routing — IIM</title>
+    <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="/css/iim.css?v=12" />
   </head>
-  <body>
-    <div class="app-shell">
-      <header class="topbar">
-        <div class="brand">IIM</div>
-        <div class="top-user">
-          <div class="user-menu" id="user-menu">
-            <button type="button" class="user-menu-btn" id="user-menu-btn" aria-expanded="false">
-              <span class="avatar" id="avatar">S</span>
-              <span id="who">Super</span>
-            </button>
-            <div class="user-menu-drop" id="user-menu-drop">
-              <button type="button" id="open-password">Change password</button>
-            </div>
-          </div>
-          <button class="btn ghost" type="button" id="logout">Logout</button>
-        </div>
-      </header>
-      <div class="app-body">
-        <nav class="sidebar">
-          <div class="nav-label">MONITORING</div>
-          <a href="/app">Live dashboard</a>
-          <a href="/stations">IIM stations</a>
-          <a href="/docs" target="_blank" rel="noopener">IIM Swagger</a>
-          <a id="pulse-swagger" href="https://petstore.swagger.io/" target="_blank" rel="noopener">PULSE Swagger</a>
-          <div class="nav-label">MANAGEMENT</div>
-          <a class="active" href="/setups">Call setups</a>
-          <a href="/ivrs">IVRs</a>
-          <a href="/functions">IVR functions</a>
-          <a href="/telephony">Telephony Setup</a>
-          <a href="/pulse">PULSE API End Point Setup</a>
-        </nav>
-        <main class="main">
-          <div class="hello">
+  <body data-nav="/setups">
+    <div class="page">
+      <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+        <div class="container-fluid" id="iim-sidebar"></div>
+      </aside>
+      <div class="page-wrapper">
+        <div id="iim-top"></div>
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="hello">
             <div>
-              <h2>Call setups</h2>
+              <h2>Inbound routing</h2>
               <p>
-                Which inbound DIDs (and optional trunks) IIM will admit, plus the live channel cap. Leave trunk empty
-                to match any channel — required for lab calls from a phone (2098 → 7777).
+                When a call comes in, match the number they dialed (DID) and optionally the trunk, then start that IVR.
+                Leave trunk empty to match any trunk — needed for lab calls from a phone (2098 → 7777).
               </p>
             </div>
           </div>
 
           <section class="panel">
-            <h3>Defined setups</h3>
+            <h3>Where inbound starts</h3>
             <div id="list" class="muted">Loading…</div>
           </section>
 
+          <section class="panel editor-panel" id="live-panel" hidden>
+            <div class="row" style="justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px">
+              <h3 id="live-title" style="margin: 0">Live calls</h3>
+              <div class="row" style="flex-wrap: wrap; align-items: center">
+                <label class="check" for="live-auto" style="margin: 0">
+                  <input id="live-auto" type="checkbox" />
+                  Auto update
+                </label>
+                <label for="live-interval" class="muted" style="margin: 0">Every</label>
+                <input id="live-interval" type="number" min="3" step="1" value="3" style="width: 4.5rem" />
+                <span class="muted">seconds (min 3)</span>
+                <button class="btn ghost" type="button" id="live-refresh">Refresh</button>
+                <button class="btn ghost" type="button" id="live-close">Close</button>
+              </div>
+            </div>
+            <p class="muted" id="live-hint">
+              Calls currently occupying this inbound route. Use Refresh, or turn on Auto update (3 seconds or more).
+            </p>
+            <div id="live-calls" class="muted">Open Live calls on a route.</div>
+          </section>
+
           <section class="panel">
-            <h3 id="form-title">Add setup</h3>
+            <h3 id="form-title">Add inbound route</h3>
             <form id="form">
               <input type="hidden" id="setupId" value="" />
               <div class="form-grid">
@@ -63,42 +62,60 @@
                   <input id="name" required placeholder="Lab inbound 7777" />
                 </div>
                 <div>
-                  <label for="maxConcurrent">Max concurrent channels</label>
+                  <label for="maxConcurrent">How many calls at once</label>
                   <input id="maxConcurrent" type="number" min="1" value="10" required />
                 </div>
                 <div>
-                  <label for="matchDid">Match DID</label>
+                  <label for="matchDid">Number they dialed (DID)</label>
                   <input id="matchDid" placeholder="7777" />
-                  <div class="hint">The number the caller dialed / inbound DID. Empty = any DID.</div>
+                  <div class="hint">Empty = any number.</div>
                 </div>
                 <div>
-                  <label for="matchTrunk">Match trunk</label>
-                  <input id="matchTrunk" placeholder="leave empty for any" />
-                  <div class="hint">PJSIP endpoint / trunk name. Empty = any (use empty when calling from 2098).</div>
-                </div>
-                <div>
-                  <label for="ivrId">IVR program</label>
-                  <select id="ivrId">
-                    <option value="">None (answer only)</option>
+                  <label for="matchTrunk">Trunk</label>
+                  <select id="matchTrunk">
+                    <option value="">Any trunk</option>
                   </select>
-                  <div class="hint">Create IVRs under IVRs in the sidebar, then attach one here.</div>
+                  <div class="hint">Leave as Any trunk to match every inbound path (lab 2098 → 7777).</div>
+                </div>
+                <div>
+                  <label for="ivrId">IVR to start</label>
+                  <select id="ivrId">
+                    <option value="">None</option>
+                  </select>
+                  <div class="hint">Build the IVR under IVRs, then pick it here so this DID starts that program.</div>
                 </div>
                 <div class="check">
                   <input id="enabled" type="checkbox" checked />
-                  <label for="enabled">Enabled (accept new calls)</label>
+                  <label for="enabled">Accept new calls</label>
                 </div>
               </div>
               <div class="row" style="margin-top: 16px">
-                <button class="btn" type="submit">Save setup</button>
-                <button class="btn ghost" type="button" id="reset">New setup</button>
+                <button class="btn" type="submit">Save</button>
+                <button class="btn ghost" type="button" id="reset">New route</button>
                 <span class="muted" id="msg"></span>
               </div>
             </form>
           </section>
-        </main>
+
+          <section class="panel">
+            <div class="row" style="justify-content: space-between; align-items: center">
+              <h3 style="margin: 0">Trunks on Asterisk</h3>
+              <button class="btn ghost" type="button" id="refresh-trunks">Refresh</button>
+            </div>
+            <p class="muted">
+              Names that are not phone extensions (extensions are numbers like 2098 or 3001). Use a trunk to restrict
+              this DID, or leave Any trunk.
+            </p>
+            <div id="asterisk" class="muted">Loading…</div>
+          </section>
+          </div>
+        </div>
       </div>
     </div>
-    <script src="/js/user-menu.js?v=3"></script>
-    <script src="/js/setups.js"></script>
+    <script src="/vendor/tabler/tabler.min.js"></script>
+    <script src="/js/icons.js?v=1"></script>
+    <script src="/js/layout.js?v=2"></script>
+    <script src="/js/user-menu.js?v=4"></script>
+    <script src="/js/setups.js?v=5"></script>
   </body>
 </html>

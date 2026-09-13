@@ -1,7 +1,8 @@
 import type { AriClient } from "../asterisk/ari.js";
 import type { ConfigStore } from "../db/sqlite.js";
 import type { Logger } from "../logging/index.js";
-import type { CallSession } from "../domain/types.js";
+import type { PulseClient } from "../pulse/client.js";
+import type { CallSession, CallSetup } from "../domain/types.js";
 import { CallRegistry } from "./registry.js";
 import type { IvrEngine } from "../ivr/engine.js";
 import { isForeignStation, isInboundChannel, matchSetup, trunkFromChannel, usableDid } from "./match.js";
@@ -23,14 +24,20 @@ type AriEvent = {
 
 export class InboundController {
   private readonly admitting = new Set<string>();
+  private onCritical: ((event: string, detail: Record<string, unknown>) => void) | null = null;
 
   constructor(
     private readonly store: ConfigStore,
     private readonly registry: CallRegistry,
     private readonly ari: AriClient,
     private readonly ivr: IvrEngine,
+    private readonly pulse: PulseClient,
     private readonly log: Logger,
   ) {}
+
+  setCriticalHandler(handler: ((event: string, detail: Record<string, unknown>) => void) | null): void {
+    this.onCritical = handler;
+  }
 
   onAriEvent(ev: AriEvent): void {
     const type = ev.type;
@@ -118,6 +125,7 @@ export class InboundController {
   }): void {
     if (this.admitting.has(facts.uniqueId) || this.registry.getByUnique(facts.uniqueId)) return;
     this.admitting.add(facts.uniqueId);
+    this.watchAdmit(facts.uniqueId);
 
     const setup = matchSetup(facts.did, facts.trunk, this.store.listSetups());
     if (!setup) {
@@ -130,8 +138,12 @@ export class InboundController {
     const reserved = this.registry.tryReserve({ ...facts, setup });
     if (!reserved.session) {
       const reason = reserved.reason;
-      this.log.warn({ component: "inbound", ...facts, setupId: setup.id, reason }, "call not admitted");
-      void this.ari.hangup(facts.uniqueId, reason === "busy" ? "busy" : "rejected");
+      if (reason === "aicb") {
+        this.rejectAicb(facts, setup);
+      } else {
+        this.log.warn({ component: "inbound", ...facts, setupId: setup.id, reason }, "call not admitted");
+        void this.ari.hangup(facts.uniqueId, "rejected");
+      }
       this.admitting.delete(facts.uniqueId);
       return;
     }
@@ -146,7 +158,9 @@ export class InboundController {
       },
       "admitted via ARI StasisStart",
     );
-    void this.holdInStasis(reserved.session).finally(() => this.admitting.delete(facts.uniqueId));
+    void this.holdInStasis(reserved.session)
+      .catch((err) => this.log.error({ component: "inbound", err, ...callLogFields(reserved.session) }, "admit failed"))
+      .finally(() => this.admitting.delete(facts.uniqueId));
   }
 
   /** Admit only. Answer is an IVR function when a program is attached. */
@@ -168,5 +182,77 @@ export class InboundController {
       { component: "inbound", ...callLogFields(session) },
       "answered — no IVR on this call setup",
     );
+  }
+
+  private rejectAicb(
+    facts: { uniqueId: string; channel: string; callerId: string; did: string; trunk: string },
+    setup: CallSetup,
+  ): void {
+    const occupying = this.registry.occupyingOnSetup(setup.id);
+    const rejected = this.registry.recordRejected({ ...facts, setup, reason: "aicb" });
+    const at = rejected.startedAt;
+    const payload = {
+      event: "AICB" as const,
+      meaning: "all inbound channels busy",
+      at,
+      setupId: setup.id,
+      setupName: setup.name,
+      maxConcurrent: setup.maxConcurrent,
+      occupyingCount: occupying.length,
+      rejected: {
+        ...callLogFields(rejected),
+        channel: facts.channel,
+        asteriskUniqueId: facts.uniqueId,
+      },
+      occupying: occupying.map((s) => ({
+        ...callLogFields(s),
+        channel: s.channel,
+      })),
+    };
+    this.log.warn(
+      {
+        component: "inbound",
+        event: "AICB",
+        at,
+        setup: setup.name,
+        setupId: setup.id,
+        maxConcurrent: setup.maxConcurrent,
+        occupyingCount: occupying.length,
+        rejectReason: "aicb",
+        ...callLogFields(rejected),
+        channel: facts.channel,
+        occupying: payload.occupying,
+      },
+      "AICB — inbound cap full; rejected with busy",
+    );
+    void this.ari.hangup(facts.uniqueId, "busy");
+    this.onCritical?.("aicb", payload);
+    void this.notifyPulseAicb(payload).catch((err) =>
+      this.log.warn({ component: "inbound", err, event: "AICB" }, "AICB PULSE notify threw"),
+    );
+  }
+
+  /** Unattended: do not leave a channel in admitting if ARI never continues. */
+  private watchAdmit(uniqueId: string): void {
+    setTimeout(() => {
+      if (!this.admitting.has(uniqueId)) return;
+      this.admitting.delete(uniqueId);
+      if (this.registry.getByUnique(uniqueId)) return;
+      this.log.warn({ component: "inbound", uniqueId }, "admit stalled — hangup leftover channel");
+      void this.ari.hangup(uniqueId, "rejected");
+    }, 30_000).unref();
+  }
+
+  private async notifyPulseAicb(body: unknown): Promise<void> {
+    const cfg = this.store.getPulseApi("aicb");
+    if (!cfg?.enabled) return;
+    if (!cfg.mockEnabled && !cfg.endpoint.trim()) return;
+    const result = await this.pulse.invoke("aicb", body);
+    if (!result.ok) {
+      this.log.warn(
+        { component: "inbound", event: "AICB", pulseError: result.error, timedOut: result.timedOut },
+        "AICB PULSE notify failed",
+      );
+    }
   }
 }

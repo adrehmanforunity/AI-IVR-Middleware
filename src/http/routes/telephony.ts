@@ -3,6 +3,7 @@ import type { Supervisor } from "../../asterisk/supervisor.js";
 import type { ConfigStore } from "../../db/sqlite.js";
 import { userFromRequest } from "./auth.js";
 import { tailLog, type LogKind } from "../../logging/tail.js";
+import { readAsteriskTrunks } from "../../asterisk/trunks.js";
 
 function actor(req: FastifyRequest, store: ConfigStore): string {
   return userFromRequest(req, store)?.username ?? (typeof req.headers["x-api-key"] === "string" ? "api-key" : "unknown");
@@ -37,6 +38,21 @@ export async function registerTelephonyRoutes(
       },
     },
     async () => supervisor.snapshot(),
+  );
+
+  app.get(
+    "/v1/asterisk/trunks",
+    {
+      schema: {
+        tags: ["telephony"],
+        summary: "PJSIP trunks on Asterisk (not numeric phone extensions). For inbound/outbound route pickers.",
+        security: [{ apiKey: [] }],
+      },
+    },
+    async () => {
+      const listed = await readAsteriskTrunks(supervisor.ari);
+      return { ok: listed.ok, trunks: listed.trunks };
+    },
   );
 
   app.put(

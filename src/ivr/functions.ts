@@ -50,6 +50,19 @@ export class IvrFunctionRunner {
     param: string,
     ctx: FnContext,
   ): Promise<{ ok: boolean; hangup: boolean; repeat: boolean; play?: string }> {
+    try {
+      return await this.runInner(action, param, ctx);
+    } catch (err) {
+      this.log.error({ component: "ivr", err, action, ...callLogFields(ctx.session) }, "function threw");
+      return { ok: false, hangup: false, repeat: false };
+    }
+  }
+
+  private async runInner(
+    action: string,
+    param: string,
+    ctx: FnContext,
+  ): Promise<{ ok: boolean; hangup: boolean; repeat: boolean; play?: string }> {
     const { name, arg, def } = this.resolve(action, param);
     const lower = name.toLowerCase();
     if (!lower) return { ok: true, hangup: false, repeat: false };
@@ -91,6 +104,8 @@ export class IvrFunctionRunner {
           fn: def.name,
           slot: def.pulseSlot,
           ok: result.ok,
+          pulseError: result.error,
+          mocked: result.mocked,
           ...callLogFields(ctx.session),
         },
         "function finished",

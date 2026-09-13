@@ -12,10 +12,33 @@ export type RejectReason =
   | "unknown_setup"
   | "maintenance"
   | "busy"
+  /** All inbound channels busy — route concurrent cap reached. */
+  | "aicb"
   | "pulse_reject"
   | "pulse_timeout"
   | "pulse_not_configured"
   | "pulse_error";
+
+export type OutboundAudience = "robo" | "agents" | "both";
+
+export type OutboundRoute = {
+  id: number;
+  name: string;
+  description: string;
+  trunk: string;
+  audience: OutboundAudience;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OutboundRouteInput = {
+  name: string;
+  description?: string;
+  trunk: string;
+  audience?: OutboundAudience;
+  enabled?: boolean;
+};
 
 export type CallSetup = {
   id: number;
@@ -41,11 +64,17 @@ export type IvrMenu = {
   key: string;
   name: string;
   description: string;
-  fileMenu: string;
-  interrupt: string;
+  /** Comma-separated sounds to play. `none` = play nothing, then take max-no-input. */
+  menuFile: string;
   fileInvalid: string;
-  inputTimeout: number;
-  retries: number;
+  fileNoInput: string;
+  inputsAcceptable: string;
+  /** Null = use system default (menu_max_input_timeout). */
+  inputTimeout: number | null;
+  maxNoInput: number | null;
+  maxInvalid: number | null;
+  onMaxNoInput: string;
+  onMaxInvalid: string;
   options: IvrOption[];
 };
 
@@ -71,11 +100,18 @@ export type IvrMenuDraft = {
   key: string;
   name: string;
   description?: string;
+  menuFile?: string;
   fileMenu?: string;
   interrupt?: string;
   fileInvalid?: string;
-  inputTimeout?: number;
-  retries?: number;
+  fileNoInput?: string;
+  inputsAcceptable?: string;
+  inputTimeout?: number | null;
+  maxNoInput?: number | null;
+  maxInvalid?: number | null;
+  retries?: number | null;
+  onMaxNoInput?: string;
+  onMaxInvalid?: string;
   isEntry?: boolean;
   options?: IvrOptionDraft[];
 };

@@ -94,11 +94,15 @@ export function isUiHtmlPath(path: string): boolean {
   return (
     path === "/app" ||
     path === "/setups" ||
+    path === "/outbound" ||
     path === "/ivrs" ||
+    path === "/ivrs/flow" ||
     path === "/functions" ||
     path === "/pulse" ||
     path === "/telephony" ||
-    path === "/stations"
+    path === "/stations" ||
+    path === "/alerts" ||
+    path === "/logs"
   );
 }
 
@@ -108,7 +112,7 @@ export function isDocsPath(path: string): boolean {
 
 export function isPublicPath(method: string, path: string): boolean {
   if (path === "/health" || path === "/ready") return true;
-  if (path.startsWith("/css/") || path.startsWith("/js/")) return true;
+  if (path.startsWith("/css/") || path.startsWith("/js/") || path.startsWith("/vendor/")) return true;
   if (method === "GET" || method === "HEAD") {
     if (path === "/") return true;
   }

@@ -45,6 +45,11 @@ export class Supervisor {
   private ariRunning = false;
   private readonly events: TelephonyEvent[] = [];
   private stationsCache: { at: number; data: StationsBoard } | null = null;
+  private pjsipCache: {
+    at: number;
+    ok: boolean;
+    endpoints: Array<{ resource: string; state: string; channelIds: string[] }> | null;
+  } | null = null;
 
   constructor(
     private readonly store: ConfigStore,
@@ -55,7 +60,7 @@ export class Supervisor {
     this.registry = new CallRegistry(store);
     this.pulse = new PulseClient(store, log);
     this.ivr = new IvrEngine(store, this.registry, this.ari, this.pulse, log);
-    this.inbound = new InboundController(store, this.registry, this.ari, this.ivr, log);
+    this.inbound = new InboundController(store, this.registry, this.ari, this.ivr, this.pulse, log);
 
     // AMI stays connected (login + keepalive) but is not used for call control.
     this.ami.on("journal", (row: { level: TelephonyEvent["level"]; message: string }) => {
@@ -69,8 +74,16 @@ export class Supervisor {
         this.note("ari", "info", `WS ${ev.type}`);
       }
       setImmediate(() => {
-        this.inbound.onAriEvent(ev);
-        this.ivr.onAriEvent(ev);
+        try {
+          this.inbound.onAriEvent(ev);
+        } catch (err) {
+          this.log.error({ component: "inbound", err, type: ev.type }, "inbound dispatch error");
+        }
+        try {
+          this.ivr.onAriEvent(ev);
+        } catch (err) {
+          this.log.error({ component: "ivr", err, type: ev.type }, "IVR dispatch error");
+        }
       });
     });
     this.ari.on("journal", (row: { level: TelephonyEvent["level"]; message: string }) => {
@@ -201,20 +214,33 @@ export class Supervisor {
     this.stopAri();
   }
 
+  async pjsipEndpoints(): Promise<{
+    ok: boolean;
+    endpoints: Array<{ resource: string; state: string; channelIds: string[] }> | null;
+  }> {
+    const now = Date.now();
+    if (this.pjsipCache && now - this.pjsipCache.at < STATIONS_CACHE_MS) return this.pjsipCache;
+    let row: { ok: boolean; endpoints: Array<{ resource: string; state: string; channelIds: string[] }> | null } = {
+      ok: false,
+      endpoints: null,
+    };
+    if (this.ariRunning && this.ari.status.restState !== "stopped") {
+      const listed = await this.ari.listPjsipEndpoints();
+      row = { ok: listed.ok, endpoints: listed.ok ? listed.endpoints : null };
+    }
+    this.pjsipCache = { at: now, ...row };
+    return row;
+  }
+
   async stationsBoard(): Promise<StationsBoard> {
     const now = Date.now();
     if (this.stationsCache && now - this.stationsCache.at < STATIONS_CACHE_MS) {
       return this.stationsCache.data;
     }
-    const range = this.store.getTelephony().ownedExtensions;
-    let endpoints = null;
-    if (this.ariRunning && this.ari.status.restState !== "stopped") {
-      const listed = await this.ari.listPjsipEndpoints();
-      endpoints = listed.ok ? listed.endpoints : null;
-    }
+    const listed = await this.pjsipEndpoints();
     const data = buildStationsBoard({
-      range,
-      endpoints,
+      range: this.store.getTelephony().ownedExtensions,
+      endpoints: listed.endpoints,
       directory: this.store.listStations(),
       calls: this.registry.listActive(),
     });

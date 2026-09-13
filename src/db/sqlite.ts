@@ -16,7 +16,10 @@ import type {
   IvrCustomFunctionInput,
   IvrFunctionDef,
   IvrMenu,
+  IvrMenuDraft,
   IvrSaveInput,
+  OutboundRoute,
+  OutboundRouteInput,
   PulseApiConfig,
   PulseApiSlot,
   StationDirectory,
@@ -26,8 +29,12 @@ import { MIGRATION_V6 } from "./migrations/006_ivr.js";
 import { MIGRATION_V7 } from "./migrations/007_ivr_document.js";
 import { MIGRATION_V8 } from "./migrations/008_call_progress.js";
 import { MIGRATION_V9 } from "./migrations/009_stations.js";
+import { MIGRATION_V10 } from "./migrations/010_outbound_routes.js";
 import { GENERIC_FUNCTIONS } from "../ivr/catalog.js";
-import { normalizeSave } from "../ivr/document.js";
+import { normalizeSave, normalizeMenu } from "../ivr/document.js";
+import { LAB_SAMPLE_IVR, LAB_SAMPLE_IVR_NAME } from "../ivr/labSample.js";
+import { MENU_DEFAULT_VALUES } from "../ivr/menuDefaults.js";
+import { parseSmtp, SMTP_DEFAULTS, SMTP_SETTING_KEYS, type SmtpConfig } from "../mail/smtp.js";
 import { parseCallerLanguage } from "../calls/progress.js";
 import { DEFAULT_OWNED_EXT_FROM, DEFAULT_OWNED_EXT_TO, parseOwnedExtensions } from "../calls/match.js";
 
@@ -236,6 +243,37 @@ export class ConfigStore {
     };
   }
 
+  getSmtp(): SmtpConfig {
+    return parseSmtp(this.getSettings());
+  }
+
+  putSmtp(patch: Partial<SmtpConfig>, actor: string): SmtpConfig {
+    const current = this.getSmtp();
+    const next: SmtpConfig = {
+      ...current,
+      ...patch,
+      password: patch.password != null && patch.password !== "" ? patch.password : current.password,
+    };
+    const k = SMTP_SETTING_KEYS;
+    this.putSetting(k.enabled, next.enabled ? "1" : "0", actor);
+    this.putSetting(k.host, next.host, actor);
+    this.putSetting(k.port, String(next.port), actor);
+    this.putSetting(k.security, next.security, actor);
+    this.putSetting(k.auth, next.auth, actor);
+    this.putSetting(k.user, next.user, actor);
+    if (patch.password != null && patch.password !== "") this.putSetting(k.password, next.password, actor);
+    this.putSetting(k.from, next.from, actor);
+    this.putSetting(k.fromName, next.fromName, actor);
+    this.putSetting(k.replyTo, next.replyTo, actor);
+    this.putSetting(k.helo, next.helo, actor);
+    this.putSetting(k.timeoutMs, String(next.timeoutMs), actor);
+    this.putSetting(k.rejectUnauthorized, next.rejectUnauthorized ? "1" : "0", actor);
+    this.putSetting(k.adminTo, next.adminTo, actor);
+    this.putSetting(k.businessTo, next.businessTo, actor);
+    this.putSetting(k.cooldownSec, String(next.cooldownSec), actor);
+    return this.getSmtp();
+  }
+
   putTelephony(
     patch: {
       ami?: Partial<TelephonyConfig["ami"]>;
@@ -369,6 +407,84 @@ export class ConfigStore {
       this.requireDb()
         .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
         .run(new Date().toISOString(), actor, "delete_setup", JSON.stringify({ id, name: current.name }));
+    });
+  }
+
+  listOutboundRoutes(): OutboundRoute[] {
+    if (!this.db) return [];
+    const rows = this.db.prepare("SELECT * FROM outbound_routes ORDER BY id").all() as OutboundRow[];
+    return rows.map(mapOutbound);
+  }
+
+  getOutboundRoute(id: number): OutboundRoute | null {
+    if (!this.db) return null;
+    const row = this.db.prepare("SELECT * FROM outbound_routes WHERE id = ?").get(id) as OutboundRow | undefined;
+    return row ? mapOutbound(row) : null;
+  }
+
+  createOutboundRoute(input: OutboundRouteInput, actor: string): OutboundRoute {
+    const name = input.name.trim();
+    const trunk = input.trunk.trim();
+    if (!name || !trunk) {
+      throw Object.assign(new Error("name and trunk are required"), { code: "BAD_REQUEST" });
+    }
+    const audience = normalizeAudience(input.audience);
+    const now = new Date().toISOString();
+    let id = 0;
+    this.runWrite(() => {
+      const r = this.requireDb()
+        .prepare(
+          `INSERT INTO outbound_routes (name, description, trunk, audience, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(name, (input.description ?? "").trim(), trunk, audience, input.enabled === false ? 0 : 1, now, now);
+      id = Number(r.lastInsertRowid);
+      this.requireDb()
+        .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
+        .run(now, actor, "create_outbound_route", JSON.stringify({ id, name }));
+    });
+    const created = this.getOutboundRoute(id);
+    if (!created) throw new Error("failed to load outbound route");
+    return created;
+  }
+
+  updateOutboundRoute(id: number, patch: Partial<OutboundRouteInput>, actor: string): OutboundRoute {
+    const current = this.getOutboundRoute(id);
+    if (!current) throw Object.assign(new Error("outbound route not found"), { code: "NOT_FOUND" });
+    const next = {
+      name: (patch.name ?? current.name).trim(),
+      description: patch.description !== undefined ? patch.description.trim() : current.description,
+      trunk: (patch.trunk ?? current.trunk).trim(),
+      audience: patch.audience ? normalizeAudience(patch.audience) : current.audience,
+      enabled: patch.enabled ?? current.enabled,
+    };
+    if (!next.name || !next.trunk) {
+      throw Object.assign(new Error("name and trunk are required"), { code: "BAD_REQUEST" });
+    }
+    const now = new Date().toISOString();
+    this.runWrite(() => {
+      this.requireDb()
+        .prepare(
+          `UPDATE outbound_routes SET name=?, description=?, trunk=?, audience=?, enabled=?, updated_at=? WHERE id=?`,
+        )
+        .run(next.name, next.description, next.trunk, next.audience, next.enabled ? 1 : 0, now, id);
+      this.requireDb()
+        .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
+        .run(now, actor, "update_outbound_route", JSON.stringify({ id }));
+    });
+    const updated = this.getOutboundRoute(id);
+    if (!updated) throw new Error("failed to load outbound route");
+    return updated;
+  }
+
+  deleteOutboundRoute(id: number, actor: string): void {
+    const current = this.getOutboundRoute(id);
+    if (!current) throw Object.assign(new Error("outbound route not found"), { code: "NOT_FOUND" });
+    this.runWrite(() => {
+      this.requireDb().prepare("DELETE FROM outbound_routes WHERE id = ?").run(id);
+      this.requireDb()
+        .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
+        .run(new Date().toISOString(), actor, "delete_outbound_route", JSON.stringify({ id, name: current.name }));
     });
   }
 
@@ -769,7 +885,7 @@ export class ConfigStore {
           );
       });
     } catch {
-      // snapshot retained; call still lives in memory
+      this.log.warn({ component: "sqlite", session: session.internalId }, "session persist failed — call stays in memory");
     }
   }
 
@@ -786,23 +902,29 @@ export class ConfigStore {
     rejectReason: string | null;
     startedAt: string;
     endedAt: string | null;
+    did: string;
+    trunk: string;
   }> {
     if (!this.db) return [];
     const rows = this.db
       .prepare(
-        "SELECT state, reject_reason, started_at, ended_at FROM call_sessions WHERE started_at >= ? ORDER BY started_at ASC",
+        "SELECT state, reject_reason, started_at, ended_at, did, trunk FROM call_sessions WHERE started_at >= ? ORDER BY started_at ASC",
       )
       .all(sinceIso) as Array<{
       state: string;
       reject_reason: string | null;
       started_at: string;
       ended_at: string | null;
+      did: string | null;
+      trunk: string | null;
     }>;
     return rows.map((r) => ({
       state: r.state,
       rejectReason: r.reject_reason,
       startedAt: r.started_at,
       endedAt: r.ended_at,
+      did: r.did ?? "",
+      trunk: r.trunk ?? "",
     }));
   }
 
@@ -966,6 +1088,10 @@ export class ConfigStore {
       db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '9')").run();
       version = 9;
     }
+    if (version < 10) {
+      db.exec(MIGRATION_V10);
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '10')").run();
+    }
   }
 
   private ensureCallMgmtSeed(): void {
@@ -1010,12 +1136,39 @@ export class ConfigStore {
     this.db
       .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('pulse_swagger_url', ?)")
       .run("https://petstore.swagger.io/");
+    const smtpSeed: Array<[string, string]> = [
+      [SMTP_SETTING_KEYS.enabled, SMTP_DEFAULTS.enabled ? "1" : "0"],
+      [SMTP_SETTING_KEYS.host, SMTP_DEFAULTS.host],
+      [SMTP_SETTING_KEYS.port, String(SMTP_DEFAULTS.port)],
+      [SMTP_SETTING_KEYS.security, SMTP_DEFAULTS.security],
+      [SMTP_SETTING_KEYS.auth, SMTP_DEFAULTS.auth],
+      [SMTP_SETTING_KEYS.user, SMTP_DEFAULTS.user],
+      [SMTP_SETTING_KEYS.from, SMTP_DEFAULTS.from],
+      [SMTP_SETTING_KEYS.fromName, SMTP_DEFAULTS.fromName],
+      [SMTP_SETTING_KEYS.replyTo, SMTP_DEFAULTS.replyTo],
+      [SMTP_SETTING_KEYS.helo, SMTP_DEFAULTS.helo],
+      [SMTP_SETTING_KEYS.timeoutMs, String(SMTP_DEFAULTS.timeoutMs)],
+      [SMTP_SETTING_KEYS.rejectUnauthorized, SMTP_DEFAULTS.rejectUnauthorized ? "1" : "0"],
+      [SMTP_SETTING_KEYS.adminTo, SMTP_DEFAULTS.adminTo],
+      [SMTP_SETTING_KEYS.businessTo, SMTP_DEFAULTS.businessTo],
+      [SMTP_SETTING_KEYS.cooldownSec, String(SMTP_DEFAULTS.cooldownSec)],
+    ];
+    for (const [key, value] of smtpSeed) {
+      this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+    }
+    for (const [key, value] of Object.entries(MENU_DEFAULT_VALUES)) {
+      this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+    }
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('voice_files_path', ?)")
+      .run("/var/lib/asterisk/sounds/custom");
     const seeds: Array<{
       slot: string;
       name: string;
       description: string;
       mockJson: string;
       mockStatus: number;
+      enabled?: number;
     }> = [
       {
         slot: "preAnswer",
@@ -1082,12 +1235,21 @@ export class ConfigStore {
         mockJson: JSON.stringify({ nextPointer: "billing" }, null, 2),
         mockStatus: 200,
       },
+      {
+        slot: "aicb",
+        name: "AICB (all inbound channels busy)",
+        description:
+          "Inbound route cap reached. IIM already rejects the overflow call with busy. Enable and set an endpoint to report AICB to PULSE (callerId, DID, trunk, occupying sessions).",
+        mockJson: JSON.stringify({ ok: true, event: "AICB" }, null, 2),
+        mockStatus: 200,
+        enabled: 0,
+      },
     ];
     const ins = this.db.prepare(
       `INSERT OR IGNORE INTO pulse_apis (
         slot, method, endpoint, timeout_ms, retries, updated_at,
         display_name, description, mock_enabled, mock_json, mock_status, mock_error, enabled
-      ) VALUES (?, 'POST', '', 5000, 0, ?, ?, ?, 0, ?, ?, NULL, 1)`,
+      ) VALUES (?, 'POST', '', 5000, 0, ?, ?, ?, 0, ?, ?, NULL, ?)`,
     );
     const fillMock = this.db.prepare(
       `UPDATE pulse_apis SET mock_json = ?, mock_status = ?
@@ -1097,16 +1259,40 @@ export class ConfigStore {
       `UPDATE pulse_apis SET display_name = ? WHERE slot = ? AND (display_name IS NULL OR display_name = '')`,
     );
     for (const s of seeds) {
-      ins.run(s.slot, now, s.name, s.description, s.mockJson, s.mockStatus);
+      ins.run(s.slot, now, s.name, s.description, s.mockJson, s.mockStatus, s.enabled ?? 1);
       fillMock.run(s.mockJson, s.mockStatus, s.slot);
       fillName.run(s.name, s.slot);
     }
     const ivrCount = this.db.prepare("SELECT COUNT(*) AS n FROM ivrs").get() as { n: number };
     if (ivrCount.n === 0) {
-      this.createIvr(LAB_IVR_SEED, "seed");
       this.createIvr(PULSE_IVR_SEED, "seed");
     }
+    this.ensureLabSampleIvr();
     this.ensureIvrAnswerSteps();
+  }
+
+  private ensureLabSampleIvr(): void {
+    const ivrs = this.listIvrs();
+    const named = ivrs.find((i) => i.name === LAB_SAMPLE_IVR_NAME);
+    const lab = ivrs.find((i) => i.name === "Lab IVR");
+    const target = named ?? lab;
+    const alreadySample = (ivr: { menus: IvrMenu[]; name: string }) =>
+      ivr.name === LAB_SAMPLE_IVR_NAME &&
+      ivr.menus.some((m) => m.key === "4.1" || m.key === "Extension-Test");
+    if (target) {
+      if (!alreadySample(target)) {
+        this.updateIvr(target.id, LAB_SAMPLE_IVR, "seed");
+      }
+    } else {
+      this.createIvr(LAB_SAMPLE_IVR, "seed");
+    }
+    const ivr = this.listIvrs().find((i) => i.name === LAB_SAMPLE_IVR_NAME);
+    if (!ivr) return;
+    for (const setup of this.listSetups()) {
+      if (setup.matchDid.trim() === "7777" && setup.ivrId !== ivr.id) {
+        this.updateSetup(setup.id, { ivrId: ivr.id }, "seed");
+      }
+    }
   }
 
   private ensureIvrAnswerSteps(): void {
@@ -1125,11 +1311,14 @@ export class ConfigStore {
               key: "answer",
               name: "Answer",
               description: "Answer before prompts",
-              fileMenu: "none",
+              menuFile: "none",
               inputTimeout: 0,
-              retries: 0,
+              maxNoInput: 0,
               isEntry: true,
-              options: [{ when: "none", action: "answer", success: `GOTO_MENU ${entry}`, fail: "hangup" }],
+              options: [
+                { when: "none", action: "answer", success: `GOTO_MENU ${entry}`, fail: "hangup" },
+                { when: "MaxNoInput", action: "answer", success: `GOTO_MENU ${entry}`, fail: "hangup" },
+              ],
             },
             ...ivr.menus.map((m) => ({ ...m, isEntry: false })),
           ],
@@ -1337,8 +1526,10 @@ function parseIvrDocument(raw: string | null | undefined, entryKey: string | nul
 } {
   if (!raw || raw === "{}") return { entryKey: entryKey ?? "", menus: [] };
   try {
-    const parsed = JSON.parse(raw) as { entryKey?: string; menus?: IvrMenu[] };
-    const menus = Array.isArray(parsed.menus) ? parsed.menus : [];
+    const parsed = JSON.parse(raw) as { entryKey?: string; menus?: IvrMenuDraft[] };
+    const menus = Array.isArray(parsed.menus)
+      ? parsed.menus.map((m, i) => normalizeMenu({ ...m, menuFile: m.menuFile || m.fileMenu }, i))
+      : [];
     return { entryKey: parsed.entryKey || entryKey || menus[0]?.key || "", menus };
   } catch {
     return { entryKey: entryKey ?? "", menus: [] };
@@ -1408,11 +1599,15 @@ function convertLegacyIvrs(db: DatabaseSync): void {
         key: keyOf(m.id),
         name: m.name,
         description: "",
-        fileMenu: m.prompt_sound || "",
-        interrupt: "",
+        menuFile: m.prompt_sound || "",
         fileInvalid: m.invalid_sound || "",
+        fileNoInput: "",
+        inputsAcceptable: "",
         inputTimeout: m.timeout_sec || 5,
-        retries: m.max_no_input || 3,
+        maxNoInput: m.max_no_input || 3,
+        maxInvalid: null,
+        onMaxNoInput: m.on_max_no_input_menu_id ? `GOTO_MENU ${keyOf(m.on_max_no_input_menu_id)}` : "hangup",
+        onMaxInvalid: m.on_max_invalid_menu_id ? `GOTO_MENU ${keyOf(m.on_max_invalid_menu_id)}` : "hangup",
         options: opts,
       };
     });
@@ -1424,12 +1619,19 @@ function convertLegacyIvrs(db: DatabaseSync): void {
         key: "answer",
         name: "Answer",
         description: "Added on import — IIM no longer answers before the IVR",
-        fileMenu: "none",
-        interrupt: "",
+        menuFile: "none",
         fileInvalid: "",
+        fileNoInput: "",
+        inputsAcceptable: "",
         inputTimeout: 0,
-        retries: 0,
-        options: [{ when: "none", action: "answer", param: "", success: `GOTO_MENU ${entryKey}`, fail: "hangup" }],
+        maxNoInput: 0,
+        maxInvalid: 0,
+        onMaxNoInput: `GOTO_MENU ${entryKey}`,
+        onMaxInvalid: "hangup",
+        options: [
+          { when: "none", action: "answer", param: "", success: `GOTO_MENU ${entryKey}`, fail: "hangup" },
+          { when: "MaxNoInput", action: "answer", param: "", success: `GOTO_MENU ${entryKey}`, fail: "hangup" },
+        ],
       });
       entryKey = "answer";
     }
@@ -1440,45 +1642,6 @@ function convertLegacyIvrs(db: DatabaseSync): void {
     );
   }
 }
-
-const LAB_IVR_SEED: IvrSaveInput = {
-  name: "Lab IVR",
-  enabled: true,
-  entryKey: "1",
-  menus: [
-    {
-      key: "1",
-      name: "Answer",
-      fileMenu: "none",
-      inputTimeout: 0,
-      retries: 0,
-      isEntry: true,
-      options: [{ when: "none", action: "answer", success: "GOTO_MENU 2", fail: "hangup" }],
-    },
-    {
-      key: "2",
-      name: "Greeting",
-      fileMenu: "hello-world A",
-      inputTimeout: 0,
-      retries: 0,
-      options: [{ when: "none", action: "goto", success: "GOTO_MENU 3", fail: "GOTO_MENU 3" }],
-    },
-    {
-      key: "3",
-      name: "Main",
-      fileMenu: "hello-world",
-      fileInvalid: "invalid",
-      inputTimeout: 5,
-      retries: 3,
-      options: [
-        { when: "1", action: "repeat", success: "repeat", fail: "repeat" },
-        { when: "2", action: "hangup", success: "hangup", fail: "hangup" },
-        { when: "none", action: "repeat", success: "repeat", fail: "repeat" },
-        { when: "MaxTries", action: "hangup", success: "hangup", fail: "hangup" },
-      ],
-    },
-  ],
-};
 
 const PULSE_IVR_SEED: IvrSaveInput = {
   name: "PULSE starter",
@@ -1546,6 +1709,36 @@ function mapSetup(row: SetupRow): CallSetup {
     matchTrunk: row.match_trunk ?? "",
     maxConcurrent: row.max_concurrent,
     ivrId: row.ivr_id ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+type OutboundRow = {
+  id: number;
+  name: string;
+  description: string;
+  trunk: string;
+  audience: string;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+};
+
+function normalizeAudience(raw: unknown): OutboundRoute["audience"] {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (v === "robo" || v === "agents" || v === "both") return v;
+  return "both";
+}
+
+function mapOutbound(row: OutboundRow): OutboundRoute {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? "",
+    trunk: row.trunk,
+    audience: normalizeAudience(row.audience),
+    enabled: row.enabled === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

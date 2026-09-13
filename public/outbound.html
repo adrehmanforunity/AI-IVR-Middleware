@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Outbound routing — IIM</title>
+    <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="/css/iim.css?v=12" />
+  </head>
+  <body data-nav="/outbound">
+    <div class="page">
+      <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+        <div class="container-fluid" id="iim-sidebar"></div>
+      </aside>
+      <div class="page-wrapper">
+        <div id="iim-top"></div>
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="hello">
+            <div>
+              <h2>Outbound routing</h2>
+              <p>
+                Trunks IIM uses when it places a call — robo campaigns, agents, or both. The list from Asterisk is
+                for reference; type or pick a trunk name here so outbound knows which path to use.
+              </p>
+            </div>
+          </div>
+
+          <section class="panel">
+            <h3>Outbound routes</h3>
+            <div id="list" class="muted">Loading…</div>
+          </section>
+
+          <section class="panel">
+            <h3 id="form-title">Add outbound route</h3>
+            <form id="form">
+              <input type="hidden" id="routeId" value="" />
+              <div class="form-grid">
+                <div>
+                  <label for="name">Name</label>
+                  <input id="name" required placeholder="PTCL outbound" />
+                </div>
+                <div>
+                  <label for="audience">Who may use this trunk</label>
+                  <select id="audience">
+                    <option value="both">Robo and agents</option>
+                    <option value="robo">Robo only</option>
+                    <option value="agents">Agents only</option>
+                  </select>
+                </div>
+                <div class="full">
+                  <label for="description">Description</label>
+                  <input id="description" placeholder="Optional" />
+                </div>
+                <div>
+                  <label for="trunk">Trunk name</label>
+                  <input id="trunk" required placeholder="as on Asterisk" />
+                </div>
+                <div class="check">
+                  <input id="enabled" type="checkbox" checked />
+                  <label for="enabled">Enabled</label>
+                </div>
+              </div>
+              <div class="row" style="margin-top: 16px">
+                <button class="btn" type="submit">Save</button>
+                <button class="btn ghost" type="button" id="reset">New route</button>
+                <span class="muted" id="msg"></span>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="row" style="justify-content: space-between; align-items: center">
+              <h3 style="margin: 0">Trunks on Asterisk</h3>
+              <button class="btn ghost" type="button" id="refresh-trunks">Refresh</button>
+            </div>
+            <p class="muted">
+              Names that are not phone extensions (extensions are numbers like 2098 or 3001). Click a row to copy the
+              name into Trunk name.
+            </p>
+            <div id="asterisk" class="muted">Loading…</div>
+          </section>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/vendor/tabler/tabler.min.js"></script>
+    <script src="/js/icons.js?v=1"></script>
+    <script src="/js/layout.js?v=2"></script>
+    <script src="/js/user-menu.js?v=4"></script>
+    <script src="/js/outbound.js?v=2"></script>
+  </body>
+</html>

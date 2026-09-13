@@ -58,7 +58,7 @@ export class CallRegistry {
       return { session: null, reason: "maintenance" };
     }
     if (this.activeOnSetup(input.setup.id) >= input.setup.maxConcurrent) {
-      return { session: null, reason: "busy" };
+      return { session: null, reason: "aicb" };
     }
     const now = new Date().toISOString();
     const session: CallSession = {
@@ -82,6 +82,42 @@ export class CallRegistry {
     this.byInternal.set(session.internalId, session);
     this.store.upsertSession(session);
     return { session };
+  }
+
+  occupyingOnSetup(setupId: number): CallSession[] {
+    return this.listActive().filter((s) => s.setupId === setupId);
+  }
+
+  /** Persist a rejected attempt without occupying a live slot. */
+  recordRejected(input: {
+    uniqueId: string;
+    channel: string;
+    callerId: string;
+    did: string;
+    trunk: string;
+    setup: CallSetup;
+    reason: RejectReason;
+  }): CallSession {
+    const now = new Date().toISOString();
+    const session: CallSession = {
+      internalId: randomUUID(),
+      uniqueId: input.uniqueId,
+      channel: input.channel,
+      setupId: input.setup.id,
+      interactionId: null,
+      callerId: input.callerId,
+      did: input.did,
+      trunk: input.trunk,
+      state: "rejected",
+      callerType: null,
+      customer: null,
+      rejectReason: input.reason,
+      startedAt: now,
+      endedAt: now,
+      ...newCallProgress(),
+    };
+    this.store.upsertSession(session);
+    return session;
   }
 
   update(session: CallSession): void {

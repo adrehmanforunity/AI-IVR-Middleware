@@ -9,12 +9,13 @@ import {
   interruptAllows,
   optionWhen,
   parseAction,
-  parsePrompt,
   resolveMenuKey,
   toAriSound,
 } from "./document.js";
+import { resolveMenu, type MenuRuntime } from "./menuDefaults.js";
 import { IvrFunctionRunner } from "./functions.js";
 import { callLogFields } from "../calls/progress.js";
+import { DEFAULT_VOICE_FILES_PATH, resolveVoiceMedia, VOICE_PATH_SETTING } from "./voice.js";
 
 type AriEvent = {
   type?: string;
@@ -28,10 +29,13 @@ type Run = {
   ivr: Ivr;
   menuKey: string;
   buffer: string;
-  tries: number;
+  noInputTries: number;
+  invalidTries: number;
   playbackId: string | null;
+  playQueue: string[];
   waitingPlayThen: string | null;
   afterInvalid: boolean;
+  afterNoInput: boolean;
   timer: NodeJS.Timeout | null;
   busy: boolean;
   answered: boolean;
@@ -66,10 +70,13 @@ export class IvrEngine {
       ivr,
       menuKey: ivr.entryKey,
       buffer: "",
-      tries: 0,
+      noInputTries: 0,
+      invalidTries: 0,
       playbackId: null,
+      playQueue: [],
       waitingPlayThen: null,
       afterInvalid: false,
+      afterNoInput: false,
       timer: null,
       busy: false,
       answered: false,
@@ -79,7 +86,7 @@ export class IvrEngine {
       { component: "ivr", ivr: ivr.name, entry: ivr.entryKey, ...callLogFields(session) },
       "IVR started",
     );
-    void this.enterMenu(run);
+    this.safe(run, this.enterMenu(run));
   }
 
   stop(uniqueId: string, reason = "stopped"): void {
@@ -95,46 +102,69 @@ export class IvrEngine {
   }
 
   onAriEvent(ev: AriEvent): void {
-    const type = ev.type;
-    if (type === "StasisEnd" || type === "ChannelDestroyed") {
-      const id = ev.channel?.id;
-      if (id) this.stop(id, "channel gone");
-      return;
-    }
-    if (type === "ChannelDtmfReceived") {
-      const id = ev.channel?.id;
-      const digit = ev.digit ?? "";
-      const run = id ? this.runs.get(id) : undefined;
-      if (run && digit && !run.busy) void this.onDigit(run, digit);
-      return;
-    }
-    if (type === "PlaybackFinished") {
-      const pb = ev.playback?.id;
-      if (!pb) return;
-      for (const run of this.runs.values()) {
-        if (run.playbackId === pb) {
-          run.playbackId = null;
-          if (run.waitingPlayThen) {
-            const next = run.waitingPlayThen;
-            run.waitingPlayThen = null;
-            run.busy = false;
-            void this.follow(run, next);
+    try {
+      const type = ev.type;
+      if (type === "StasisEnd" || type === "ChannelDestroyed") {
+        const id = ev.channel?.id;
+        if (id) this.stop(id, "channel gone");
+        return;
+      }
+      if (type === "ChannelDtmfReceived") {
+        const id = ev.channel?.id;
+        const digit = ev.digit ?? "";
+        const run = id ? this.runs.get(id) : undefined;
+        if (run && digit && !run.busy) this.safe(run, this.onDigit(run, digit));
+        return;
+      }
+      if (type === "PlaybackFinished") {
+        const pb = ev.playback?.id;
+        if (!pb) return;
+        for (const run of this.runs.values()) {
+          if (run.playbackId === pb) {
+            run.playbackId = null;
+            if (run.waitingPlayThen) {
+              const next = run.waitingPlayThen;
+              run.waitingPlayThen = null;
+              run.busy = false;
+              this.safe(run, this.follow(run, next));
+              break;
+            }
+            if (run.afterInvalid) {
+              run.afterInvalid = false;
+              this.safe(run, this.enterMenu(run));
+              break;
+            }
+            if (run.afterNoInput) {
+              run.afterNoInput = false;
+              this.safe(run, this.enterMenu(run));
+              break;
+            }
+            if (run.playQueue.length) {
+              this.safe(run, this.playNextFile(run));
+              break;
+            }
+            this.afterPrompt(run);
             break;
           }
-          if (run.afterInvalid) {
-            run.afterInvalid = false;
-            void this.enterMenu(run);
-            break;
-          }
-          this.afterPrompt(run);
-          break;
         }
       }
+    } catch (err) {
+      this.log.error({ component: "ivr", err, type: ev.type }, "IVR event handler error");
     }
+  }
+
+  private safe(run: Run, work: Promise<void>): void {
+    void work.catch((err) => {
+      this.log.error({ component: "ivr", err, ...callLogFields(run.session) }, "IVR step failed — call continues or hangs up next event");
+    });
   }
 
   private menu(run: Run): IvrMenu | undefined {
     return run.ivr.menus.find((m) => m.key === run.menuKey);
+  }
+
+  private runtime(menu: IvrMenu): MenuRuntime {
+    return resolveMenu(menu, this.store.getSettings());
   }
 
   private async enterMenu(run: Run): Promise<void> {
@@ -145,26 +175,43 @@ export class IvrEngine {
       return;
     }
     run.buffer = "";
+    run.playQueue = [];
     run.session.currentMenu = menu.key;
     this.registry.update(run.session);
     this.clearTimer(run);
-    const prompt = parsePrompt(menu.fileMenu);
-    if (prompt.sound) {
-      await this.play(run, prompt.sound);
-      if (run.playbackId) return;
+    const rt = this.runtime(menu);
+    if (rt.none) {
+      this.afterPrompt(run);
+      return;
+    }
+    run.playQueue = [...rt.files];
+    if (run.playQueue.length) {
+      await this.playNextFile(run);
+      return;
     }
     this.afterPrompt(run);
+  }
+
+  private async playNextFile(run: Run): Promise<void> {
+    const sound = run.playQueue.shift();
+    if (!sound) {
+      this.afterPrompt(run);
+      return;
+    }
+    await this.play(run, sound);
+    if (!run.playbackId) await this.playNextFile(run);
   }
 
   private afterPrompt(run: Run): void {
     if (!this.runs.has(run.session.uniqueId)) return;
     const menu = this.menu(run);
     if (!menu) return;
-    if (menu.inputTimeout <= 0) {
-      void this.takeWhen(run, "none");
+    const rt = this.runtime(menu);
+    if (rt.inputTimeout <= 0) {
+      this.safe(run, this.takeWhen(run, "none"));
       return;
     }
-    this.armTimeout(run);
+    this.armTimeout(run, rt.inputTimeout);
   }
 
   private async play(run: Run, sound: string): Promise<void> {
@@ -173,17 +220,20 @@ export class IvrEngine {
       run.playbackId = null;
     }
     if (!sound.trim()) return;
-    run.playbackId = await this.ari.play(run.session.uniqueId, sound);
+    const root = this.store.getSettings()[VOICE_PATH_SETTING] || DEFAULT_VOICE_FILES_PATH;
+    const media = resolveVoiceMedia(sound, run.session.language, root);
+    if (!media) return;
+    run.playbackId = await this.ari.play(run.session.uniqueId, media);
   }
 
-  private armTimeout(run: Run): void {
+  private armTimeout(run: Run, seconds: number): void {
     this.clearTimer(run);
-    const menu = this.menu(run);
-    if (!menu || menu.inputTimeout <= 0) return;
+    if (seconds <= 0) return;
     run.timer = setTimeout(() => {
       run.timer = null;
-      void this.takeWhen(run, "none");
-    }, menu.inputTimeout * 1000);
+      this.safe(run, this.takeWhen(run, "none"));
+    }, seconds * 1000);
+    run.timer.unref();
   }
 
   private clearTimer(run: Run): void {
@@ -197,27 +247,32 @@ export class IvrEngine {
     if (!this.runs.has(run.session.uniqueId)) return;
     const menu = this.menu(run);
     if (!menu) return;
-    const prompt = parsePrompt(menu.fileMenu);
-    const mask = menu.interrupt || prompt.interrupt;
-    if (run.playbackId && !interruptAllows(mask, digit)) return;
+    const rt = this.runtime(menu);
+    if (run.playbackId && !interruptAllows(rt.inputsAcceptable, digit)) return;
     this.clearTimer(run);
     if (run.playbackId) {
       await this.ari.stopPlayback(run.playbackId);
       run.playbackId = null;
+      run.playQueue = [];
+    }
+    if (!interruptAllows(rt.inputsAcceptable, digit)) {
+      await this.onInvalid(run);
+      return;
     }
     run.buffer += digit;
     const exact = findOption(menu, run.buffer);
     if (exact) {
-      run.tries = 0;
+      run.noInputTries = 0;
+      run.invalidTries = 0;
       await this.execOption(run, exact, run.buffer);
       return;
     }
     const prefix = menu.options.some((o) => {
       const w = optionWhen(o.when);
-      return w !== "none" && w !== "MaxTries" && w.startsWith(run.buffer);
+      return w !== "none" && w !== "MaxTries" && w !== "MaxNoInput" && w !== "MaxInvalid" && w.startsWith(run.buffer);
     });
     if (prefix) {
-      this.armTimeout(run);
+      this.armTimeout(run, rt.inputTimeout);
       return;
     }
     await this.onInvalid(run);
@@ -226,13 +281,14 @@ export class IvrEngine {
   private async onInvalid(run: Run): Promise<void> {
     const menu = this.menu(run);
     if (!menu) return;
+    const rt = this.runtime(menu);
     run.buffer = "";
-    run.tries += 1;
-    if (menu.retries > 0 && run.tries >= menu.retries) {
-      await this.takeWhen(run, "MaxTries");
+    run.invalidTries += 1;
+    if (run.invalidTries >= rt.maxInvalid) {
+      await this.takeWhen(run, "MaxInvalid");
       return;
     }
-    const invalid = toAriSound(menu.fileInvalid);
+    const invalid = toAriSound(rt.fileInvalid);
     if (invalid) {
       run.afterInvalid = true;
       await this.play(run, invalid);
@@ -242,37 +298,59 @@ export class IvrEngine {
     await this.enterMenu(run);
   }
 
+  private async onNoInput(run: Run): Promise<void> {
+    const menu = this.menu(run);
+    if (!menu) return;
+    const rt = this.runtime(menu);
+    run.noInputTries += 1;
+    if (run.noInputTries >= rt.maxNoInput) {
+      await this.takeWhen(run, "MaxNoInput");
+      return;
+    }
+    const sound = toAriSound(rt.fileNoInput);
+    if (sound) {
+      run.afterNoInput = true;
+      await this.play(run, sound);
+      if (run.playbackId) return;
+      run.afterNoInput = false;
+    }
+    await this.enterMenu(run);
+  }
+
   private async takeWhen(run: Run, when: string): Promise<void> {
     const menu = this.menu(run);
     if (!menu) return;
-    const opt = findOption(menu, when);
+    const rt = this.runtime(menu);
+    let want = optionWhen(when);
+    if (want === "MaxTries") want = "MaxNoInput";
+    const opt =
+      findOption(menu, want) ||
+      (want === "MaxNoInput" ? findOption(menu, "MaxTries") : undefined) ||
+      (want === "MaxInvalid" ? findOption(menu, "MaxTries") : undefined);
     if (!opt) {
-      if (when === "MaxTries") {
-        await this.hangup(run);
+      if (want === "MaxNoInput") {
+        await this.follow(run, rt.onMaxNoInput);
         return;
       }
-      if (when === "none") {
-        run.tries += 1;
-        if (menu.retries > 0 && run.tries >= menu.retries) {
-          await this.takeWhen(run, "MaxTries");
-          return;
-        }
-        if (menu.retries === 0) {
-          await this.hangup(run);
-          return;
-        }
-        await this.enterMenu(run);
+      if (want === "MaxInvalid") {
+        await this.follow(run, rt.onMaxInvalid);
+        return;
       }
+      if (want === "none") {
+        await this.onNoInput(run);
+        return;
+      }
+      await this.onInvalid(run);
       return;
     }
-    if (when === "none" && (opt.action.toLowerCase() === "repeat" || opt.action.toLowerCase() === "replay")) {
-      run.tries += 1;
-      if (menu.retries > 0 && run.tries >= menu.retries) {
-        await this.takeWhen(run, "MaxTries");
+    if (want === "none") {
+      const act = opt.action.toLowerCase();
+      if (act === "repeat" || act === "replay" || !opt.action) {
+        await this.onNoInput(run);
         return;
       }
     }
-    await this.execOption(run, opt, when);
+    await this.execOption(run, opt, want);
   }
 
   private async execOption(run: Run, opt: IvrOption, digit: string): Promise<void> {
@@ -309,6 +387,9 @@ export class IvrEngine {
       let dest = result.ok ? opt.success : opt.fail;
       if (!dest && result.ok && parsed.name.toLowerCase() === "goto") dest = parsed.arg;
       await this.follow(run, dest);
+    } catch (err) {
+      this.log.error({ component: "ivr", err, ...callLogFields(run.session) }, "IVR option failed");
+      await this.hangup(run);
     } finally {
       if (!run.waitingPlayThen) run.busy = false;
     }
@@ -331,7 +412,8 @@ export class IvrEngine {
       return;
     }
     run.menuKey = next;
-    run.tries = 0;
+    run.noInputTries = 0;
+    run.invalidTries = 0;
     await this.enterMenu(run);
   }
 

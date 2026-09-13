@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Download logs — IIM</title>
+    <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="/css/iim.css?v=12" />
+  </head>
+  <body data-nav="/logs">
+    <div class="page">
+      <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+        <div class="container-fluid" id="iim-sidebar"></div>
+      </aside>
+      <div class="page-wrapper">
+        <div id="iim-top"></div>
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="page-header d-print-none">
+              <div class="row align-items-center">
+                <div class="col">
+                  <div class="page-pretitle">IIM</div>
+                  <h2 class="page-title">Download logs</h2>
+                  <div class="text-secondary">
+                    Hourly files on this IIM host: app (<code>.log</code>), AMI wire (<code>.AMI</code>), ARI wire
+                    (<code>.ARI</code>). Select what you need and download a zip, a gzip of one file, or a tar.gz of
+                    many files. For offline viewing.
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header"><h3 class="card-title">Files</h3></div>
+              <div class="card-body">
+                <p class="text-secondary" id="root-hint">Loading…</p>
+                <div class="log-tools">
+                  <div>
+                    <label class="form-label" for="filter-day">Day</label>
+                    <select class="form-select" id="filter-day"></select>
+                  </div>
+                  <div>
+                    <label class="form-label" for="filter-kind">Type</label>
+                    <select class="form-select" id="filter-kind">
+                      <option value="">All</option>
+                      <option value="app">App</option>
+                      <option value="ami">AMI</option>
+                      <option value="ari">ARI</option>
+                    </select>
+                  </div>
+                  <div class="form-check mt-4">
+                    <input class="form-check-input" id="sel-all" type="checkbox" />
+                    <label class="form-check-label" for="sel-all">Select visible</label>
+                  </div>
+                  <div>
+                    <label class="form-label">Format</label>
+                    <div class="d-flex gap-3">
+                      <label class="form-check">
+                        <input class="form-check-input" type="radio" name="fmt" value="zip" checked />
+                        <span class="form-check-label">zip</span>
+                      </label>
+                      <label class="form-check">
+                        <input class="form-check-input" type="radio" name="fmt" value="gzip" />
+                        <span class="form-check-label">gzip</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="mt-4">
+                    <button class="btn btn-primary" type="button" id="download">Download selected</button>
+                    <button class="btn btn-outline-secondary" type="button" id="refresh">Refresh</button>
+                  </div>
+                </div>
+                <p class="text-secondary" id="msg"></p>
+                <div class="table-responsive">
+                  <table class="table table-vcenter">
+                    <thead>
+                      <tr>
+                        <th></th>
+                        <th>Day</th>
+                        <th>Hour</th>
+                        <th>Type</th>
+                        <th>File</th>
+                        <th>Size</th>
+                      </tr>
+                    </thead>
+                    <tbody id="rows"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/vendor/tabler/tabler.min.js"></script>
+    <script src="/js/icons.js?v=1"></script>
+    <script src="/js/layout.js?v=2"></script>
+    <script src="/js/user-menu.js?v=4"></script>
+    <script src="/js/logs.js?v=1"></script>
+  </body>
+</html>

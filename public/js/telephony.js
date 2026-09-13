@@ -142,9 +142,17 @@ function fillFrom(cfg, tel, settings) {
   document.getElementById("ownedTo").value = tel?.ownedExtensions?.to ?? 3999;
   document.getElementById("pulse-swagger-url").value =
     settings?.pulse_swagger_url || "https://petstore.swagger.io/";
+  document.getElementById("menu_max_no_input").value = settings?.menu_max_no_input || "3";
+  document.getElementById("menu_max_invalid").value = settings?.menu_max_invalid || "3";
+  document.getElementById("menu_file_invalid").value = settings?.menu_file_invalid || "invalid";
+  document.getElementById("menu_file_no_input").value = settings?.menu_file_no_input || "oninput";
+  document.getElementById("menu_max_input_timeout").value = settings?.menu_max_input_timeout || "5";
+  document.getElementById("menu_inputs_acceptable").value = settings?.menu_inputs_acceptable || "*#1234567890";
+  document.getElementById("voice_files_path").value =
+    settings?.voice_files_path || "/var/lib/asterisk/sounds/custom";
   const ownedHint = document.getElementById("owned-hint");
   if (ownedHint) {
-    ownedHint.textContent = `Stations ${document.getElementById("ownedFrom").value}–${document.getElementById("ownedTo").value} belong to IIM. Inbound DIDs are Call setups, not this range.`;
+    ownedHint.textContent = `Stations ${document.getElementById("ownedFrom").value}–${document.getElementById("ownedTo").value} belong to IIM. Inbound numbers are set on Inbound routing, not this range.`;
   }
   document.getElementById("ami-pw-hint").textContent = cfg.amiPasswordFromEnv
     ? "Runtime password is overridden by AMI_PASSWORD in .env"
@@ -219,7 +227,7 @@ function asteriskBody() {
 document.getElementById("tel-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const msg = document.getElementById("save-msg");
-  if (!confirm("Save AMI/ARI settings, IIM extension range, and PULSE Swagger URL?")) return;
+  if (!confirm("Save AMI/ARI settings, IIM extension range, voice folder, IVR menu defaults, and PULSE Swagger URL?")) return;
   const cfgRes = await api("/v1/config/asterisk", {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -238,8 +246,26 @@ document.getElementById("tel-form").addEventListener("submit", async (e) => {
       value: document.getElementById("pulse-swagger-url").value.trim(),
     }),
   });
+  const menuKeys = [
+    "menu_max_no_input",
+    "menu_max_invalid",
+    "menu_file_invalid",
+    "menu_file_no_input",
+    "menu_max_input_timeout",
+    "menu_inputs_acceptable",
+    "voice_files_path",
+  ];
+  let menuOk = true;
+  for (const key of menuKeys) {
+    const res = await api("/v1/config/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key, value: document.getElementById(key).value.trim() }),
+    });
+    if (!res.ok) menuOk = false;
+  }
   const swagger = await swaggerRes.json().catch(() => ({}));
-  if (!cfgRes.ok || !telRes.ok || !swaggerRes.ok) {
+  if (!cfgRes.ok || !telRes.ok || !swaggerRes.ok || !menuOk) {
     const errCfg = cfgRes.ok ? {} : await cfgRes.json().catch(() => ({}));
     const errTel = telRes.ok ? {} : await telRes.json().catch(() => ({}));
     msg.textContent = swagger.error || errCfg.error || errTel.error || "Save failed";

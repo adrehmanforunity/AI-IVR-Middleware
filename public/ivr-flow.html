@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IVR flow — IIM</title>
+    <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="/css/iim.css?v=12" />
+  </head>
+  <body class="flow-body">
+    <header class="navbar navbar-expand-md d-print-none">
+      <div class="container-xl">
+        <a class="btn btn-outline-secondary" href="/ivrs">Back to IVRs</a>
+        <h1 class="navbar-brand mb-0 ms-2" id="title">IVR flow</h1>
+        <div class="navbar-nav flex-row ms-auto">
+          <a class="btn btn-outline-secondary me-2" id="edit-link" href="/ivrs">Edit</a>
+          <button class="btn btn-primary" type="button" id="print">Print / Save PDF</button>
+        </div>
+      </div>
+    </header>
+    <p class="text-secondary no-print px-4 pt-3" id="hint">
+      Boxes are menus. Lines are keys the caller can press (or automatic). Use Print and choose “Save as PDF”.
+    </p>
+    <div id="chart" class="ivr-chart"></div>
+    <script src="/vendor/tabler/tabler.min.js"></script>
+    <script src="/js/ivr-flow.js?v=4"></script>
+  </body>
+</html>

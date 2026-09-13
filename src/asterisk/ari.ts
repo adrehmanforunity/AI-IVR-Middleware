@@ -103,6 +103,7 @@ export class AriClient extends EventEmitter {
         })),
       };
     } catch {
+      this.log.warn({ component: "ari" }, "PJSIP endpoint list was not JSON");
       return { ok: false, endpoints: [] };
     }
   }
@@ -186,20 +187,11 @@ export class AriClient extends EventEmitter {
     this.restAbort?.abort();
     const ac = new AbortController();
     this.restAbort = ac;
-    const target = this.target;
 
     try {
-      const url = this.restUrl(target, "/asterisk/info");
-      writeAriLog(
-        "out",
-        `REST GET ${url.toString()}\nAuthorization: Basic ***\n`,
-      );
-      const res = await fetch(url, {
-        headers: { Authorization: this.authHeader(target) },
-        signal: AbortSignal.any([ac.signal, AbortSignal.timeout(this.connectTimeoutMs)]),
-      });
-      const body = await res.text();
-      writeAriLog("in", `REST ${res.status} ${url.pathname}\n${body}`);
+      const wasDown = this.status.restState !== "connected";
+      const res = await this.rest("GET", "/asterisk/info", undefined, { quiet: true });
+      if (this.stopped || ac.signal.aborted) return;
       if (!res.ok) {
         throw new Error(`ari rest ${res.status}`);
       }
@@ -208,7 +200,7 @@ export class AriClient extends EventEmitter {
       this.status.lastError = this.status.wsState === "disconnected" ? this.status.lastError : null;
       this.recompute();
       this.log.debug({ component: "ari" }, "ari rest ok");
-      this.emit("journal", { level: "info", message: "REST /asterisk/info ok" });
+      if (wasDown) this.emit("journal", { level: "info", message: "REST /asterisk/info ok" });
     } catch (err) {
       if (ac.signal.aborted && this.stopped) return;
       const message = err instanceof Error ? err.message : String(err);
@@ -281,7 +273,7 @@ export class AriClient extends EventEmitter {
   private scheduleRest(): void {
     if (this.stopped || this.restTimer) return;
     const delay =
-      this.status.restState === "connected" ? Math.max(this.retryDelayMs, 5000) : Math.max(500, this.retryDelayMs);
+      this.status.restState === "connected" ? Math.max(this.retryDelayMs, 20_000) : Math.max(500, this.retryDelayMs);
     this.restTimer = setTimeout(() => {
       this.restTimer = null;
       void this.pollRest();

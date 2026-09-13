@@ -35,6 +35,29 @@ export async function registerSetupRoutes(
     async () => registry.setupsWithCounts(),
   );
 
+  app.get(
+    "/v1/setups/:id/calls",
+    {
+      schema: {
+        tags: ["setups"],
+        summary: "Live calls on this inbound route (caller, DID, interaction, language, menu)",
+        security: [{ apiKey: [] }],
+        params: { type: "object", properties: { id: { type: "number" } } },
+      },
+    },
+    async (req, reply) => {
+      const id = Number((req.params as { id: string }).id);
+      const setup = store.getSetup(id);
+      if (!setup) return reply.code(404).send({ error: "unknown inbound route" });
+      const live = registry.setupsWithCounts().find((s) => s.id === id);
+      const calls = registry.occupyingOnSetup(id);
+      return {
+        setup: live ?? { ...setup, activeCount: calls.length, draining: !setup.enabled },
+        calls,
+      };
+    },
+  );
+
   app.post(
     "/v1/setups",
     {

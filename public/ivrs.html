@@ -4,58 +4,37 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>IVRs — IIM</title>
-    <link rel="stylesheet" href="/css/iim.css?v=2" />
+    <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="/css/iim.css?v=12" />
   </head>
-  <body>
-    <div class="app-shell">
-      <header class="topbar">
-        <div class="brand">IIM</div>
-        <div class="top-user">
-          <div class="user-menu" id="user-menu">
-            <button type="button" class="user-menu-btn" id="user-menu-btn" aria-expanded="false">
-              <span class="avatar" id="avatar">S</span>
-              <span id="who">Super</span>
-            </button>
-            <div class="user-menu-drop" id="user-menu-drop">
-              <button type="button" id="open-password">Change password</button>
-            </div>
-          </div>
-          <button class="btn ghost" type="button" id="logout">Logout</button>
-        </div>
-      </header>
-      <div class="app-body">
-        <nav class="sidebar">
-          <div class="nav-label">MONITORING</div>
-          <a href="/app">Live dashboard</a>
-          <a href="/stations">IIM stations</a>
-          <a href="/docs" target="_blank" rel="noopener">IIM Swagger</a>
-          <a id="pulse-swagger" href="https://petstore.swagger.io/" target="_blank" rel="noopener">PULSE Swagger</a>
-          <div class="nav-label">MANAGEMENT</div>
-          <a href="/setups">Call setups</a>
-          <a class="active" href="/ivrs">IVRs</a>
-          <a href="/functions">IVR functions</a>
-          <a href="/telephony">Telephony Setup</a>
-          <a href="/pulse">PULSE API End Point Setup</a>
-        </nav>
-        <main class="main">
-          <div class="hello">
+  <body data-nav="/ivrs">
+    <div class="page">
+      <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+        <div class="container-fluid" id="iim-sidebar"></div>
+      </aside>
+      <div class="page-wrapper">
+        <div id="iim-top"></div>
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="hello">
             <div>
               <h2>IVRs</h2>
-              <p>
-                Each IVR is a program of steps. A step can play a file (or nothing), wait for keys, then run a
-                function. True goes to <strong>Then if OK</strong>, false to <strong>Then if failed</strong>. Answer
-                only happens when a step calls <code>answer</code>. Attach the IVR on Call setups.
-              </p>
+              <p>Pick an IVR to edit one <strong>menu</strong> at a time. Open <strong>Flow</strong> on a new page to see the call path, print it, or save it as PDF.</p>
             </div>
           </div>
 
           <section class="panel">
-            <h3>Defined IVRs</h3>
-            <div id="list" class="muted">Loading…</div>
+            <div class="row" style="justify-content: space-between; align-items: center">
+              <h3 style="margin: 0">Defined IVRs</h3>
+              <button class="btn ghost" type="button" id="import-json">Import JSON</button>
+              <input id="import-file" type="file" accept="application/json,.json" hidden />
+              <button class="btn" type="button" id="new-ivr">New IVR</button>
+            </div>
+            <div id="list" class="muted" style="margin-top: 12px">Loading…</div>
           </section>
 
-          <section class="panel">
-            <h3 id="form-title">Add IVR</h3>
+          <section class="panel editor-panel" id="editor-panel" hidden>
+            <h3 id="form-title">Edit IVR</h3>
             <form id="form">
               <input type="hidden" id="ivrId" value="" />
               <div class="form-grid">
@@ -68,19 +47,33 @@
                   <label for="enabled">Enabled</label>
                 </div>
               </div>
-              <div id="menus"></div>
+              <div class="ivr-work">
+                <div>
+                  <div class="muted" style="margin-bottom: 8px">Menus</div>
+                  <div id="step-nav" class="step-nav"></div>
+                  <button class="btn ghost" type="button" id="add-menu" style="margin-top: 8px; width: 100%">
+                    Add menu
+                  </button>
+                </div>
+                <div id="step-form"></div>
+              </div>
               <div class="row" style="margin-top: 16px">
-                <button class="btn ghost" type="button" id="add-menu">Add step</button>
                 <button class="btn" type="submit">Save IVR</button>
-                <button class="btn ghost" type="button" id="reset">New IVR</button>
+                <button class="btn ghost" type="button" id="export-json">Export JSON</button>
+                <button class="btn ghost" type="button" id="open-flow">Open flow</button>
+                <button class="btn ghost" type="button" id="close-editor">Close</button>
                 <span class="muted" id="msg"></span>
               </div>
             </form>
           </section>
-        </main>
+          </div>
+        </div>
       </div>
     </div>
-    <script src="/js/user-menu.js?v=3"></script>
-    <script src="/js/ivrs.js"></script>
+    <script src="/vendor/tabler/tabler.min.js"></script>
+    <script src="/js/icons.js?v=1"></script>
+    <script src="/js/layout.js?v=2"></script>
+    <script src="/js/user-menu.js?v=4"></script>
+    <script src="/js/ivrs.js?v=8"></script>
   </body>
 </html>

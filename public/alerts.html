@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Alert mail (SMTP) — IIM</title>
+    <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="/css/iim.css?v=12" />
+  </head>
+  <body data-nav="/alerts">
+    <div class="page">
+      <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+        <div class="container-fluid" id="iim-sidebar"></div>
+      </aside>
+      <div class="page-wrapper">
+        <div id="iim-top"></div>
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="hello">
+            <div>
+              <h2>Alert mail (SMTP)</h2>
+              <p>
+                This process runs unattended. Configure any SMTP here (Gmail, Microsoft 365, a local relay, or a
+                provider). Critical events — AMI/ARI down, SQLite, process crashes, AICB, and host CPU/memory/disk at
+                or above 75% — email admin and optionally business addresses. Same alert is not repeated until the
+                cooldown elapses.
+              </p>
+            </div>
+          </div>
+
+          <section class="panel">
+            <h3>Presets (fill the form — still Save)</h3>
+            <div class="row" style="flex-wrap: wrap">
+              <button class="btn ghost" type="button" id="preset-gmail-587">Gmail STARTTLS 587</button>
+              <button class="btn ghost" type="button" id="preset-gmail-465">Gmail TLS 465</button>
+              <button class="btn ghost" type="button" id="preset-m365">Microsoft 365</button>
+              <button class="btn ghost" type="button" id="preset-local">Local mail (port 25, no auth)</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h3>SMTP</h3>
+            <form id="form">
+              <div class="form-grid">
+                <div class="check">
+                  <input id="enabled" type="checkbox" />
+                  <label for="enabled">Send alert mail</label>
+                </div>
+                <div>
+                  <label for="host">Host</label>
+                  <input id="host" placeholder="smtp.gmail.com or 192.168.1.10" />
+                </div>
+                <div>
+                  <label for="port">Port</label>
+                  <input id="port" type="number" min="1" max="65535" value="587" />
+                </div>
+                <div>
+                  <label for="security">Connection security</label>
+                  <select id="security">
+                    <option value="starttls">STARTTLS (typical 587)</option>
+                    <option value="tls">TLS / SSL (typical 465)</option>
+                    <option value="none">None (typical 25, local relay)</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="auth">Authentication</label>
+                  <select id="auth">
+                    <option value="login">Username and password</option>
+                    <option value="none">None</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="user">Username</label>
+                  <input id="user" autocomplete="off" placeholder="account or app user" />
+                </div>
+                <div>
+                  <label for="password">Password</label>
+                  <input id="password" type="password" autocomplete="new-password" placeholder="leave blank to keep saved" />
+                  <div class="hint" id="pw-hint">No password stored yet.</div>
+                </div>
+                <div>
+                  <label for="from">From address</label>
+                  <input id="from" placeholder="iim@example.com" />
+                </div>
+                <div>
+                  <label for="fromName">From name</label>
+                  <input id="fromName" placeholder="IIM" />
+                </div>
+                <div>
+                  <label for="replyTo">Reply-to (optional)</label>
+                  <input id="replyTo" placeholder="ops@example.com" />
+                </div>
+                <div>
+                  <label for="helo">EHLO / hostname (optional)</label>
+                  <input id="helo" placeholder="iim.local" />
+                </div>
+                <div>
+                  <label for="timeoutMs">Timeout (ms)</label>
+                  <input id="timeoutMs" type="number" min="1000" value="15000" />
+                </div>
+                <div>
+                  <label for="cooldownSec">Same-alert cooldown (seconds, min 60)</label>
+                  <input id="cooldownSec" type="number" min="60" value="600" />
+                </div>
+                <div class="check">
+                  <input id="rejectUnauthorized" type="checkbox" checked />
+                  <label for="rejectUnauthorized">Verify TLS certificate (off for some local servers)</label>
+                </div>
+                <div class="full">
+                  <label for="adminTo">Admin addresses</label>
+                  <input id="adminTo" placeholder="ops@example.com, oncall@example.com" />
+                  <div class="hint">Process, AMI, ARI, SQLite. Comma or semicolon separated.</div>
+                </div>
+                <div class="full">
+                  <label for="businessTo">Business addresses</label>
+                  <input id="businessTo" placeholder="duty@example.com" />
+                  <div class="hint">Also receive AICB (all inbound channels busy) and similar call events.</div>
+                </div>
+              </div>
+              <div class="row" style="margin-top: 16px">
+                <button class="btn" type="submit">Save</button>
+                <button class="btn ghost" type="button" id="test">Send test</button>
+                <span class="muted" id="msg"></span>
+              </div>
+            </form>
+          </section>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/vendor/tabler/tabler.min.js"></script>
+    <script src="/js/icons.js?v=1"></script>
+    <script src="/js/layout.js?v=2"></script>
+    <script src="/js/user-menu.js?v=4"></script>
+    <script src="/js/alerts.js?v=1"></script>
+  </body>
+</html>

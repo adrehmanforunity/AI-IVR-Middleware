@@ -1,36 +1,30 @@
 import type { FastifyInstance } from "fastify";
 import type { ProcessHealth } from "../../processGuards.js";
 import type { Supervisor } from "../../asterisk/supervisor.js";
+import type { HostSampler } from "../../ops/host.js";
 
 export async function registerHealthRoutes(
   app: FastifyInstance,
   processHealth: ProcessHealth,
   supervisor: Supervisor,
+  host: HostSampler,
 ): Promise<void> {
   app.get(
     "/health",
     {
       schema: {
         tags: ["ops"],
-        summary: "Liveness — process is up",
-        response: {
-          200: {
-            type: "object",
-            properties: {
-              status: { type: "string" },
-              unhandledErrors: { type: "number" },
-              lastUnhandledAt: { type: ["string", "null"] },
-            },
-          },
-        },
+        summary: "Liveness plus host CPU/memory and every mounted volume. High utilization is flagged; process stays up.",
       },
     },
     async (_req, reply) => {
-      const status = processHealth.healthy ? "ok" : "unhealthy";
+      const hostSnap = host.snapshot();
+      const status = processHealth.healthy ? (hostSnap.critical ? "degraded" : "ok") : "unhealthy";
       return reply.code(200).send({
         status,
         unhandledErrors: processHealth.unhandledErrors,
         lastUnhandledAt: processHealth.lastUnhandledAt,
+        host: hostSnap,
       });
     },
   );

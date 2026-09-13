@@ -4,20 +4,32 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sign In — IIM</title>
-    <link rel="stylesheet" href="/css/iim.css" />
+    <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="/css/iim.css?v=12" />
   </head>
   <body class="login-body">
-    <form class="login-card" id="login-form" autocomplete="on">
-      <h1>Sign In</h1>
-      <p class="welcome">Welcome to IIM</p>
-      <label for="username">User Name</label>
-      <input id="username" name="username" type="text" required autofocus />
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" required />
-      <div class="login-error" id="error"></div>
-      <button class="btn-login" type="submit" id="submit">Login</button>
-      <p class="login-foot">Intelligent IVR Middleware</p>
-    </form>
+    <div class="page page-center">
+      <div class="container container-tight py-4" style="position: relative; z-index: 1">
+        <form class="card card-md" id="login-form" autocomplete="on">
+          <div class="card-body">
+            <h1 class="h2 text-center mb-1" style="color: #ff8c1a">Sign In</h1>
+            <p class="text-center text-secondary mb-4">Welcome to IIM</p>
+            <div class="mb-3">
+              <label class="form-label" for="username">User Name</label>
+              <input class="form-control" id="username" name="username" type="text" required autofocus />
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="password">Password</label>
+              <input class="form-control" id="password" name="password" type="password" required />
+            </div>
+            <div class="login-error" id="error"></div>
+            <button class="btn btn-primary w-100" type="submit" id="submit">Login</button>
+            <p class="text-center text-secondary mt-3 mb-0">Intelligent IVR Middleware</p>
+          </div>
+        </form>
+      </div>
+    </div>
+    <script src="/vendor/tabler/tabler.min.js"></script>
     <script src="/js/login.js"></script>
   </body>
 </html>

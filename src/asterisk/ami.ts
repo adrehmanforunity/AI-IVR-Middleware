@@ -113,6 +113,10 @@ export class AmiClient extends EventEmitter {
 
   private onData(chunk: string): void {
     this.buffer += chunk;
+    if (this.buffer.length > 1_000_000) {
+      this.log.warn({ component: "ami", bytes: this.buffer.length }, "ami buffer overflow — dropping");
+      this.buffer = this.buffer.slice(-64_000);
+    }
     this.buffer = this.buffer.replace(/\r\n/g, "\n");
 
     if (!this.loginSent && this.buffer.includes("\n")) {
@@ -181,7 +185,14 @@ export class AmiClient extends EventEmitter {
 
   private startPing(): void {
     this.clearPing();
-    this.pingTimer = setInterval(() => this.ping(), 20_000);
+    this.pingTimer = setInterval(() => {
+      try {
+        this.ping();
+      } catch (err) {
+        this.log.warn({ component: "ami", err }, "ami ping failed");
+      }
+    }, 20_000);
+    this.pingTimer.unref();
   }
 
   private clearPing(): void {
@@ -194,13 +205,17 @@ export class AmiClient extends EventEmitter {
   private sendAction(fields: AmiMessage): void {
     const sock = this.socket;
     if (!sock || sock.destroyed) return;
-    const actionId = fields.ActionID ?? `iim-${this.actionSeq++}`;
-    const lines = Object.entries({ ...fields, ActionID: actionId }).map(
-      ([k, v]) => `${k}: ${v}`,
-    );
-    const packet = `${lines.join("\r\n")}\r\n\r\n`;
-    if (fields.Action !== "Ping") writeAmiLog("out", lines.join("\n"));
-    sock.write(packet);
+    try {
+      const actionId = fields.ActionID ?? `iim-${this.actionSeq++}`;
+      const lines = Object.entries({ ...fields, ActionID: actionId }).map(
+        ([k, v]) => `${k}: ${v}`,
+      );
+      const packet = `${lines.join("\r\n")}\r\n\r\n`;
+      if (fields.Action !== "Ping") writeAmiLog("out", lines.join("\n"));
+      sock.write(packet);
+    } catch (err) {
+      this.log.warn({ component: "ami", err }, "ami write failed");
+    }
   }
 
   private fail(message: string): void {

@@ -102,7 +102,7 @@ function render(board) {
     ["In use", c.inUse ?? 0],
     ["Unregistered", c.unregistered ?? 0],
   ]
-    .map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`)
+    .map(([k, v]) => `<div class="col-sm-6 col-lg"><div class="card"><div class="card-body"><div class="subheader">${esc(k)}</div><div class="h1 mb-0">${v}</div></div></div></div>`)
     .join("");
 
   const view = pagedView(board);

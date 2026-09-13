@@ -16,12 +16,17 @@ import { registerConfigRoutes } from "./routes/config.js";
 import { registerStatusRoutes } from "./routes/status.js";
 import { registerTelephonyRoutes } from "./routes/telephony.js";
 import { registerSetupRoutes } from "./routes/setups.js";
+import { registerOutboundRoutes } from "./routes/outbound.js";
 import { registerPulseRoutes } from "./routes/pulse.js";
 import { registerIvrRoutes } from "./routes/ivrs.js";
 import { registerCallRoutes } from "./routes/calls.js";
 import { registerReportRoutes } from "./routes/reports.js";
 import { registerAuthRoutes, userFromRequest } from "./routes/auth.js";
 import { registerStationRoutes } from "./routes/stations.js";
+import { registerSmtpRoutes } from "./routes/smtp.js";
+import { registerLogRoutes } from "./routes/logs.js";
+import type { AlertService } from "../mail/alerts.js";
+import type { HostSampler } from "../ops/host.js";
 import {
   applySecurityHeaders,
   csrfMatches,
@@ -44,6 +49,8 @@ export async function buildApp(opts: {
   store: ConfigStore;
   supervisor: Supervisor;
   processHealth: ProcessHealth;
+  alerts: AlertService;
+  host: HostSampler;
 }): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false,
@@ -113,11 +120,14 @@ export async function buildApp(opts: {
         { name: "config", description: "Persistent configuration" },
         { name: "asterisk", description: "AMI/ARI status and reconnect" },
         { name: "telephony", description: "Connect/disconnect Asterisk (not setup drain)" },
-        { name: "setups", description: "DID/trunk channel caps and new-call enable" },
+        { name: "setups", description: "Inbound DID/trunk routing" },
+        { name: "outbound", description: "Outbound trunks for robo and agents" },
         { name: "pulse", description: "PULSE CX REST slots" },
         { name: "ivr", description: "IVR programs and functions" },
         { name: "calls", description: "Live call progress" },
         { name: "stations", description: "IIM-owned PBX extensions" },
+        { name: "alerts", description: "SMTP and critical email alerts" },
+        { name: "logs", description: "Hourly log listing and offline download" },
       ],
       components: {
         securitySchemes: {
@@ -142,11 +152,15 @@ export async function buildApp(opts: {
   });
   app.get("/app", async (req, reply) => sendProtectedHtml(req, reply, opts, "app.html"));
   app.get("/setups", async (req, reply) => sendProtectedHtml(req, reply, opts, "setups.html"));
+  app.get("/outbound", async (req, reply) => sendProtectedHtml(req, reply, opts, "outbound.html"));
   app.get("/ivrs", async (req, reply) => sendProtectedHtml(req, reply, opts, "ivrs.html"));
+  app.get("/ivrs/flow", async (req, reply) => sendProtectedHtml(req, reply, opts, "ivr-flow.html"));
   app.get("/functions", async (req, reply) => sendProtectedHtml(req, reply, opts, "functions.html"));
   app.get("/pulse", async (req, reply) => sendProtectedHtml(req, reply, opts, "pulse.html"));
   app.get("/telephony", async (req, reply) => sendProtectedHtml(req, reply, opts, "telephony.html"));
   app.get("/stations", async (req, reply) => sendProtectedHtml(req, reply, opts, "stations.html"));
+  app.get("/alerts", async (req, reply) => sendProtectedHtml(req, reply, opts, "alerts.html"));
+  app.get("/logs", async (req, reply) => sendProtectedHtml(req, reply, opts, "logs.html"));
 
   await app.register(async (scope) => {
     await scope.register(staticFiles, {
@@ -164,21 +178,32 @@ export async function buildApp(opts: {
       decorateReply: false,
     });
   });
+  await app.register(async (scope) => {
+    await scope.register(staticFiles, {
+      root: join(publicDir, "vendor"),
+      prefix: "/vendor/",
+      decorateReply: false,
+    });
+  });
 
   await registerAuthRoutes(app, opts.store, opts.env);
-  await registerHealthRoutes(app, opts.processHealth, opts.supervisor);
+  await registerHealthRoutes(app, opts.processHealth, opts.supervisor, opts.host);
   await registerStatusRoutes(app, opts.supervisor);
   await registerTelephonyRoutes(app, opts.supervisor, opts.store);
   await registerSetupRoutes(app, opts.store, opts.supervisor.registry);
+  await registerOutboundRoutes(app, opts.store, opts.supervisor);
   await registerPulseRoutes(app, opts.store);
   await registerIvrRoutes(app, opts.store);
   await registerCallRoutes(app, opts.supervisor.registry, opts.store);
   await registerStationRoutes(app, opts.supervisor, opts.store);
+  await registerSmtpRoutes(app, opts.store, opts.alerts);
+  await registerLogRoutes(app);
   await registerReportRoutes(app, {
     store: opts.store,
     registry: opts.supervisor.registry,
     supervisor: opts.supervisor,
     processHealth: opts.processHealth,
+    host: opts.host,
   });
   await registerConfigRoutes(app, opts.store);
 

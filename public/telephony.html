@@ -4,41 +4,19 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telephony Setup — IIM</title>
-    <link rel="stylesheet" href="/css/iim.css?v=2" />
+    <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="/css/iim.css?v=12" />
   </head>
-  <body>
-    <div class="app-shell">
-      <header class="topbar">
-        <div class="brand">IIM</div>
-        <div class="top-user">
-          <div class="user-menu" id="user-menu">
-            <button type="button" class="user-menu-btn" id="user-menu-btn" aria-expanded="false">
-              <span class="avatar" id="avatar">S</span>
-              <span id="who">Super</span>
-            </button>
-            <div class="user-menu-drop" id="user-menu-drop">
-              <button type="button" id="open-password">Change password</button>
-            </div>
-          </div>
-          <button class="btn ghost" type="button" id="logout">Logout</button>
-        </div>
-      </header>
-      <div class="app-body">
-        <nav class="sidebar">
-          <div class="nav-label">MONITORING</div>
-          <a href="/app">Live dashboard</a>
-          <a href="/stations">IIM stations</a>
-          <a href="/docs" target="_blank" rel="noopener">IIM Swagger</a>
-          <a id="pulse-swagger" href="https://petstore.swagger.io/" target="_blank" rel="noopener">PULSE Swagger</a>
-          <div class="nav-label">MANAGEMENT</div>
-          <a href="/setups">Call setups</a>
-          <a href="/ivrs">IVRs</a>
-          <a href="/functions">IVR functions</a>
-          <a class="active" href="/telephony">Telephony Setup</a>
-          <a href="/pulse">PULSE API End Point Setup</a>
-        </nav>
-        <main class="main">
-          <div class="hello">
+  <body data-nav="/telephony">
+    <div class="page">
+      <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+        <div class="container-fluid" id="iim-sidebar"></div>
+      </aside>
+      <div class="page-wrapper">
+        <div id="iim-top"></div>
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="hello">
             <div>
               <h2>Telephony Setup</h2>
               <p>
@@ -147,7 +125,7 @@
               <p class="muted">
                 Agent-side PBX extensions this process owns (default <strong>3001–3999</strong>). Other phones (2098, …)
                 are not ours — IIM will not control them. Live view: <a href="/stations">IIM stations</a>. This is
-                <strong>not</strong> the inbound DID list; DIDs belong in Call setups (for example lab DID 7777).
+                <strong>not</strong> the inbound DID list; those belong in Inbound routing (for example lab DID 7777).
               </p>
               <div class="form-grid">
                 <div>
@@ -160,6 +138,57 @@
                 </div>
               </div>
               <p class="muted" id="owned-hint" style="margin-top: 8px"></p>
+            </section>
+
+            <section class="panel">
+              <h3>Voice files (system)</h3>
+              <p class="muted">
+                On Asterisk, not on this IIM host. Default
+                <code>/var/lib/asterisk/sounds/custom</code>. Put prompts in language folders:
+                <code>urdu</code>, <code>english</code>, <code>sindhi</code>, <code>pashto</code>,
+                <code>arabic</code>. Menus store the file name only (e.g. <code>BOK_GREETINGS</code>); IIM plays
+                <code>custom/urdu/BOK_GREETINGS</code> (or the current caller language).
+              </p>
+              <div class="form-grid">
+                <div class="full">
+                  <label for="voice_files_path">Voice files folder on Asterisk</label>
+                  <input id="voice_files_path" value="/var/lib/asterisk/sounds/custom" required />
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h3>IVR menu defaults (system)</h3>
+              <p class="muted">
+                Used when a menu leaves a field blank. Wait time starts after the prompt finishes. If the prompt is
+                “none”, nothing is played and the call follows “after too many silences”.
+              </p>
+              <div class="form-grid">
+                <div>
+                  <label for="menu_max_no_input">Times a caller can stay silent</label>
+                  <input id="menu_max_no_input" type="number" min="0" value="3" required />
+                </div>
+                <div>
+                  <label for="menu_max_invalid">Times a caller can press a wrong key</label>
+                  <input id="menu_max_invalid" type="number" min="0" value="3" required />
+                </div>
+                <div>
+                  <label for="menu_file_invalid">Wrong-key prompt</label>
+                  <input id="menu_file_invalid" value="invalid" required />
+                </div>
+                <div>
+                  <label for="menu_file_no_input">No-key prompt</label>
+                  <input id="menu_file_no_input" value="oninput" required />
+                </div>
+                <div>
+                  <label for="menu_max_input_timeout">Seconds to wait for a key</label>
+                  <input id="menu_max_input_timeout" type="number" min="0" value="5" required />
+                </div>
+                <div>
+                  <label for="menu_inputs_acceptable">Keys menus accept</label>
+                  <input id="menu_inputs_acceptable" value="*#1234567890" required />
+                </div>
+              </div>
             </section>
 
             <section class="panel">
@@ -213,10 +242,14 @@
               <div class="log-pane" id="log-text">Loading…</div>
             </section>
           </div>
-        </main>
+          </div>
+        </div>
       </div>
     </div>
-    <script src="/js/user-menu.js?v=3"></script>
-    <script src="/js/telephony.js"></script>
+    <script src="/vendor/tabler/tabler.min.js"></script>
+    <script src="/js/icons.js?v=1"></script>
+    <script src="/js/layout.js?v=2"></script>
+    <script src="/js/user-menu.js?v=4"></script>
+    <script src="/js/telephony.js?v=7"></script>
   </body>
 </html>

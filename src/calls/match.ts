@@ -54,7 +54,11 @@ export function endpointFromChannel(channel: string): string {
   return trunkFromChannel(channel);
 }
 
-/** True when the PJSIP/SIP endpoint is an IIM station (default 3001–3999), not a trunk or other phone. */
+/** True when the PJSIP resource is a trunk name, not a phone extension (2098, 3001, …). */
+export function isPjsipTrunkName(resource: string): boolean {
+  const v = (resource ?? "").trim();
+  return v.length > 0 && !/^\d+$/.test(v);
+}
 export function isAppStation(endpoint: string, range: { from: number; to: number }): boolean {
   const v = (endpoint ?? "").trim();
   if (!/^\d+$/.test(v)) return false;

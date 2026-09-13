@@ -62,6 +62,7 @@ export function callLogFields(session: CallSession): Record<string, unknown> {
     state: session.state,
     callerId: session.callerId,
     did: session.did,
+    trunk: session.trunk,
   };
 }
 

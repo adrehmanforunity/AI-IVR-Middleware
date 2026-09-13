@@ -4,92 +4,155 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Live dashboard — IIM</title>
-    <link rel="stylesheet" href="/css/iim.css?v=2" />
+    <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="/css/iim.css?v=12" />
   </head>
-  <body>
-    <div class="app-shell">
-      <header class="topbar">
-        <div class="brand">IIM</div>
-        <div class="top-user">
-          <div class="user-menu" id="user-menu">
-            <button type="button" class="user-menu-btn" id="user-menu-btn" aria-expanded="false">
-              <span class="avatar" id="avatar">S</span>
-              <span id="who">Super</span>
-            </button>
-            <div class="user-menu-drop" id="user-menu-drop">
-              <button type="button" id="open-password">Change password</button>
+  <body data-nav="/app">
+    <div class="page">
+      <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+        <div class="container-fluid" id="iim-sidebar"></div>
+      </aside>
+      <div class="page-wrapper">
+        <div id="iim-top"></div>
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="page-header d-print-none">
+              <div class="row align-items-center">
+                <div class="col-auto">
+                  <span class="avatar avatar-lg bg-primary-lt text-primary" data-icon="layout-dashboard"></span>
+                </div>
+                <div class="col">
+                  <div class="page-pretitle">Operations</div>
+                  <h2 class="page-title" id="greet">Welcome</h2>
+                  <div class="text-secondary">
+                    Live occupancy, inbound by DID and trunk, stations, every local disk/partition, and ops alerts.
+                    Refreshes every 4 seconds.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="sample-banner" class="alert alert-warning" hidden>
+              History below is <strong>sample report data</strong> — no real calls in the last 24 hours yet. Live calls,
+              trunks, and stations still reflect this process.
+            </div>
+
+            <div class="row row-deck row-cards mb-3" id="kpis"></div>
+
+            <div class="card mb-3">
+              <div class="card-header">
+                <h3 class="card-title"><span class="card-title-icon" data-icon="server"></span> This host</h3>
+              </div>
+              <div class="card-body">
+                <p class="text-secondary">
+                  CPU, memory, and <strong>every mounted volume</strong> on this IIM machine (Windows drive letters or
+                  Linux/macOS partitions) — not Asterisk. At or above 75% is critical for dashboard,
+                  <code>/health</code>, and admin mail.
+                </p>
+                <div id="host-metrics" class="text-secondary">Loading…</div>
+              </div>
+            </div>
+
+            <div class="row row-cards mb-3">
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title"><span class="card-title-icon" data-icon="phone-call"></span> Live calls by stage</h3></div>
+                  <div class="card-body">
+                    <p class="text-secondary">In-memory sessions on this IIM process (not PULSE reports).</p>
+                    <div id="funnel" class="funnel"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title"><span class="card-title-icon" data-icon="activity"></span> System performance</h3></div>
+                  <div class="card-body" id="perf">Loading…</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card mb-3">
+              <div class="card-header"><h3 class="card-title"><span class="card-title-icon" data-icon="phone"></span> Current calls</h3></div>
+              <div class="card-body" id="live-calls">Loading…</div>
+            </div>
+
+            <div class="row row-cards mb-3">
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title"><span class="card-title-icon" data-icon="phone-incoming"></span> Inbound by DID (24h)</h3></div>
+                  <div class="card-body">
+                    <p class="text-secondary">From IIM sessions. Live column is this process right now.</p>
+                    <div id="by-did">Loading…</div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title"><span class="card-title-icon" data-icon="route"></span> Trunks</h3></div>
+                  <div class="card-body">
+                    <p class="text-secondary">PJSIP names that are not station extensions. Volume is inbound IIM saw in 24h.</p>
+                    <div id="trunks">Loading…</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="row row-cards mb-3">
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title"><span class="card-title-icon" data-icon="headphones"></span> Agent stations</h3></div>
+                  <div class="card-body">
+                    <p class="text-secondary" id="stations-hint">
+                      Owned range from Telephony Setup. Detail on <a href="/stations">IIM stations</a>.
+                    </p>
+                    <div id="stations-kpis">Loading…</div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title"><span class="card-title-icon" data-icon="phone-outgoing"></span> Disconnects &amp; busy</h3></div>
+                  <div class="card-body">
+                    <p class="text-secondary">
+                      Call ends IIM recorded. SIP cause codes are not stored. Link flaps are AMI/ARI reconnects this
+                      process.
+                    </p>
+                    <div id="disconnects">Loading…</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="row row-cards mb-3">
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title" id="hist-title"><span class="card-title-icon" data-icon="chart-bar"></span> History (24h)</h3></div>
+                  <div class="card-body"><div id="hourly" class="bars"></div></div>
+                </div>
+              </div>
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title"><span class="card-title-icon" data-icon="circle-x"></span> Reject reasons</h3></div>
+                  <div class="card-body"><div id="rejects" class="bars"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card mb-3" id="setups">
+              <div class="card-header"><h3 class="card-title"><span class="card-title-icon" data-icon="bell"></span> Inbound occupancy</h3></div>
+              <div class="card-body">
+                <p class="text-secondary">Change where inbound starts on <a href="/setups">Inbound routing</a>.</p>
+                <div id="setup-list">Loading…</div>
+              </div>
             </div>
           </div>
-          <button class="btn ghost" type="button" id="logout">Logout</button>
         </div>
-      </header>
-      <div class="app-body">
-        <nav class="sidebar">
-          <div class="nav-label">MONITORING</div>
-          <a class="active" href="/app">Live dashboard</a>
-          <a href="/stations">IIM stations</a>
-          <a href="/docs" target="_blank" rel="noopener">IIM Swagger</a>
-          <a id="pulse-swagger" href="https://petstore.swagger.io/" target="_blank" rel="noopener">PULSE Swagger</a>
-          <div class="nav-label">MANAGEMENT</div>
-          <a href="/setups">Call setups</a>
-          <a href="/ivrs">IVRs</a>
-          <a href="/functions">IVR functions</a>
-          <a href="/telephony">Telephony Setup</a>
-          <a href="/pulse">PULSE API End Point Setup</a>
-        </nav>
-        <main class="main">
-          <div class="hello">
-            <div class="avatar" id="hello-avatar">S</div>
-            <div>
-              <h2 id="greet">Welcome</h2>
-              <p>Live call stages, system performance, and history. Refreshes every 4 seconds.</p>
-            </div>
-          </div>
-
-          <div id="sample-banner" class="banner" hidden>
-            History below is <strong>sample report data</strong> — no real calls in the last 24 hours yet. Live stage
-            counts still reflect this process.
-          </div>
-
-          <div class="cards" id="kpis"></div>
-
-          <div class="two-panels">
-            <section class="panel">
-              <h3>Live calls by stage</h3>
-              <p class="muted">In-memory sessions on this IIM process (not PULSE reports).</p>
-              <div id="funnel" class="funnel"></div>
-            </section>
-            <section class="panel">
-              <h3>System performance</h3>
-              <div id="perf" class="muted">Loading…</div>
-            </section>
-          </div>
-
-          <section class="panel">
-            <h3>Current calls</h3>
-            <div id="live-calls" class="muted">Loading…</div>
-          </section>
-
-          <div class="two-panels">
-            <section class="panel">
-              <h3 id="hist-title">History (24h)</h3>
-              <div id="hourly" class="bars"></div>
-            </section>
-            <section class="panel">
-              <h3>Reject reasons</h3>
-              <div id="rejects" class="bars"></div>
-            </section>
-          </div>
-
-          <section class="panel" id="setups">
-            <h3>Call setups occupancy</h3>
-            <p class="muted">Manage DID/trunk admission on <a href="/setups">Call setups</a>.</p>
-            <div id="setup-list" class="muted">Loading…</div>
-          </section>
-        </main>
       </div>
     </div>
-    <script src="/js/user-menu.js?v=3"></script>
-    <script src="/js/app.js"></script>
+    <script src="/vendor/tabler/tabler.min.js"></script>
+    <script src="/js/icons.js?v=1"></script>
+    <script src="/js/layout.js?v=2"></script>
+    <script src="/js/user-menu.js?v=4"></script>
+    <script src="/js/app.js?v=6"></script>
   </body>
 </html>

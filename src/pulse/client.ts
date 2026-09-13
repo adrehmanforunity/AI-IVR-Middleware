@@ -32,6 +32,10 @@ export class PulseClient {
       return this.mock<T>(cfg);
     }
     if (!cfg.endpoint.trim()) {
+      if (cfg.mockJson.trim() || cfg.mockError.trim()) {
+        this.log.info({ component: "pulse", slot: cfg.slot }, "no PULSE URL — using stored mock");
+        return this.mock<T>(cfg);
+      }
       return fail("pulse api endpoint not configured");
     }
 

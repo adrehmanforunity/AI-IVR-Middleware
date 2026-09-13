@@ -9,13 +9,18 @@ export type ProcessHealth = {
 
 const COOLDOWN_MS = 10_000;
 
-export function installProcessGuards(log: Logger, health: ProcessHealth): void {
+export function installProcessGuards(
+  log: Logger,
+  health: ProcessHealth,
+  onCritical?: (event: string, detail: Record<string, unknown>) => void,
+): void {
   process.on("unhandledRejection", (reason) => {
     health.unhandledErrors += 1;
     health.lastUnhandledAt = new Date().toISOString();
     health.cooldownUntil = Date.now() + COOLDOWN_MS;
     health.healthy = false;
     log.error({ component: "process", err: reason }, "unhandledRejection — process stays up");
+    onCritical?.("unhandled_rejection", { error: String(reason) });
     scheduleRecovery(health);
   });
 
@@ -25,6 +30,7 @@ export function installProcessGuards(log: Logger, health: ProcessHealth): void {
     health.cooldownUntil = Date.now() + COOLDOWN_MS;
     health.healthy = false;
     log.error({ component: "process", err }, "uncaughtException — process stays up");
+    onCritical?.("uncaught_exception", { error: err.message });
     scheduleRecovery(health);
   });
 }

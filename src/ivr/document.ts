@@ -22,20 +22,35 @@ export function normalizeSave(input: IvrSaveInput): { entryKey: string; menus: I
 
 export function normalizeMenu(m: IvrMenuDraft, index: number): IvrMenu {
   const key = (m.key || String(index + 1)).trim();
-  const parsed = parsePrompt(m.fileMenu ?? "");
+  const menuFile = String(m.menuFile ?? m.fileMenu ?? "").trim();
+  const options = (m.options ?? []).map(normalizeOption).filter((o) => o.when.length > 0);
+  const noneOpt = options.find((o) => o.when === "none");
+  const hasMaxNo = options.some((o) => o.when === "MaxNoInput" || o.when === "MaxTries");
+  if (/^none$/i.test(menuFile) && noneOpt && !hasMaxNo) {
+    options.push({ ...noneOpt, when: "MaxNoInput" });
+  }
   return {
     key,
     name: (m.name || key).trim() || `Menu ${index + 1}`,
     description: (m.description ?? "").trim(),
-    fileMenu: (m.fileMenu ?? "").trim(),
-    interrupt: (m.interrupt ?? parsed.interrupt).trim(),
+    menuFile,
     fileInvalid: (m.fileInvalid ?? "").trim(),
-    inputTimeout: Math.max(0, Number(m.inputTimeout ?? 0) || 0),
-    retries: Math.max(0, Number(m.retries ?? 0) || 0),
-    options: (m.options ?? [])
-      .map(normalizeOption)
-      .filter((o) => o.when.length > 0),
+    fileNoInput: (m.fileNoInput ?? "").trim(),
+    inputsAcceptable: (m.inputsAcceptable ?? m.interrupt ?? "").trim(),
+    inputTimeout: optionalInt(m.inputTimeout),
+    maxNoInput: optionalInt(m.maxNoInput ?? m.retries),
+    maxInvalid: optionalInt(m.maxInvalid),
+    onMaxNoInput: (m.onMaxNoInput ?? "").trim(),
+    onMaxInvalid: (m.onMaxInvalid ?? "").trim(),
+    options,
   };
+}
+
+function optionalInt(v: unknown): number | null {
+  if (v === null || v === undefined || v === "" || v === "default") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.floor(n));
 }
 
 function normalizeOption(o: {
@@ -59,6 +74,8 @@ export function optionWhen(raw: string): string {
   if (!s) return "none";
   const lower = s.toLowerCase();
   if (lower === "none" || lower === "auto" || lower === "noinput" || lower === "no input") return "none";
+  if (lower === "maxnoinput" || lower === "max no input" || lower === "max-no-input") return "MaxNoInput";
+  if (lower === "maxinvalid" || lower === "max invalid" || lower === "max-invalid") return "MaxInvalid";
   if (lower === "maxtries" || lower === "max tries" || lower === "max-tries") return "MaxTries";
   return s;
 }

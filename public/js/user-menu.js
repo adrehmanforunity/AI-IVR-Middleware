@@ -60,10 +60,18 @@ function placeDrop(btn, drop) {
 }
 
 function bindUserMenu() {
+  const openPw = document.getElementById("open-password");
+  if (openPw) {
+    openPw.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openPasswordModal();
+    });
+  }
+
   const btn = document.getElementById("user-menu-btn");
   const drop = document.getElementById("user-menu-drop");
-  const openPw = document.getElementById("open-password");
-  if (!btn || !drop || !openPw) return;
+  if (!btn || !drop || btn.getAttribute("data-bs-toggle") === "dropdown") return;
 
   drop.removeAttribute("hidden");
   document.body.appendChild(drop);
@@ -86,13 +94,6 @@ function bindUserMenu() {
     e.stopPropagation();
     if (isOpen()) closeMenu();
     else openMenu();
-  });
-
-  openPw.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    closeMenu();
-    openPasswordModal();
   });
 
   document.addEventListener("click", (e) => {
@@ -124,12 +125,24 @@ function bindPulseSwaggerLink() {
     .catch(() => {});
 }
 
+function bindLogout() {
+  const logout = document.getElementById("logout");
+  if (!logout || logout.dataset.bound) return;
+  logout.dataset.bound = "1";
+  logout.addEventListener("click", async () => {
+    await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+    window.location.href = "/";
+  });
+}
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
     bindUserMenu();
     bindPulseSwaggerLink();
+    bindLogout();
   });
 } else {
   bindUserMenu();
   bindPulseSwaggerLink();
+  bindLogout();
 }
