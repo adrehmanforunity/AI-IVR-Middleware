@@ -22,6 +22,7 @@ export async function registerHealthRoutes(
       const status = processHealth.healthy ? (hostSnap.critical ? "degraded" : "ok") : "unhealthy";
       return reply.code(200).send({
         status,
+        instance: supervisor.snapshot().instance,
         unhandledErrors: processHealth.unhandledErrors,
         lastUnhandledAt: processHealth.lastUnhandledAt,
         host: hostSnap,

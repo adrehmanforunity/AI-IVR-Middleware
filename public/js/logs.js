@@ -28,6 +28,8 @@ function fmtDay(day) {
 const KIND_LABEL = { app: "App", ami: "AMI", ari: "ARI" };
 
 let files = [];
+const PAGE_SIZE = 25;
+let page = 1;
 
 function visible() {
   const day = document.getElementById("filter-day").value;
@@ -39,11 +41,41 @@ function selectedIds() {
   return [...document.querySelectorAll("#rows input[type=checkbox]:checked")].map((el) => el.value);
 }
 
+function renderPager(total, pages, current) {
+  const pager = document.getElementById("pager");
+  if (!pager) return;
+  pager.hidden = false;
+  pager.innerHTML = `
+    <button class="btn btn-outline-secondary" type="button" id="page-prev" ${current <= 1 ? "disabled" : ""}>Previous</button>
+    <span class="muted">Page ${current} of ${pages} · ${total} file${total === 1 ? "" : "s"} · ${PAGE_SIZE} per page</span>
+    <button class="btn btn-outline-secondary" type="button" id="page-next" ${current >= pages ? "disabled" : ""}>Next</button>`;
+  document.getElementById("page-prev").addEventListener("click", () => {
+    if (page > 1) {
+      page -= 1;
+      render();
+    }
+  });
+  document.getElementById("page-next").addEventListener("click", () => {
+    if (page < pages) {
+      page += 1;
+      render();
+    }
+  });
+}
+
 function render() {
-  const list = visible();
+  const all = visible();
+  const pages = Math.max(1, Math.ceil(all.length / PAGE_SIZE) || 1);
+  if (page > pages) page = pages;
+  if (page < 1) page = 1;
+  const start = (page - 1) * PAGE_SIZE;
+  const list = all.slice(start, start + PAGE_SIZE);
   const body = document.getElementById("rows");
-  if (!list.length) {
+  const selAll = document.getElementById("sel-all");
+  if (selAll) selAll.checked = false;
+  if (!all.length) {
     body.innerHTML = `<tr><td colspan="6" class="muted">No files match the filter.</td></tr>`;
+    renderPager(0, 1, 1);
     return;
   }
   body.innerHTML = list
@@ -58,6 +90,7 @@ function render() {
       </tr>`,
     )
     .join("");
+  renderPager(all.length, pages, page);
 }
 
 async function load() {
@@ -72,6 +105,7 @@ async function load() {
     return;
   }
   files = data.files || [];
+  page = 1;
   document.getElementById("root-hint").textContent =
     `${files.length} file(s) under ${data.root || "—"}${data.source === "temp" ? " (temp fallback)" : ""}.`;
   const days = [...new Set(files.map((f) => f.day))];
@@ -116,8 +150,14 @@ async function download() {
   msg.textContent = `Saved ${name} (${ids.length} file${ids.length === 1 ? "" : "s"}).`;
 }
 
-document.getElementById("filter-day").addEventListener("change", render);
-document.getElementById("filter-kind").addEventListener("change", render);
+document.getElementById("filter-day").addEventListener("change", () => {
+  page = 1;
+  render();
+});
+document.getElementById("filter-kind").addEventListener("change", () => {
+  page = 1;
+  render();
+});
 document.getElementById("sel-all").addEventListener("change", (e) => {
   const on = e.target.checked;
   document.querySelectorAll("#rows input[type=checkbox]").forEach((el) => {

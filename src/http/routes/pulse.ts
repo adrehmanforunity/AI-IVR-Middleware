@@ -6,6 +6,40 @@ export async function registerPulseRoutes(app: FastifyInstance, store: ConfigSto
   const who = (req: FastifyRequest) => userFromRequest(req, store)?.username ?? "api-key";
 
   app.get(
+    "/v1/pulse/auth",
+    {
+      schema: {
+        tags: ["pulse"],
+        summary: "Pulse API key status (the key itself is never returned)",
+        security: [{ apiKey: [] }],
+      },
+    },
+    async () => ({ keySet: store.getPulseApiKey().length > 0 }),
+  );
+
+  app.put(
+    "/v1/pulse/auth",
+    {
+      schema: {
+        tags: ["pulse"],
+        summary: "Set or clear the Pulse API key used on every live Pulse call",
+        security: [{ apiKey: [] }],
+        body: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            apiKey: { type: "string", description: "Raw Pulse key. Empty string clears it (no auth headers)." },
+          },
+        },
+      },
+    },
+    async (req) => {
+      const apiKey = String((req.body as { apiKey?: string } | undefined)?.apiKey ?? "");
+      return store.putPulseApiKey(apiKey, who(req));
+    },
+  );
+
+  app.get(
     "/v1/pulse/apis",
     {
       schema: {
@@ -29,7 +63,7 @@ export async function registerPulseRoutes(app: FastifyInstance, store: ConfigSto
           required: ["slot", "name"],
           additionalProperties: false,
           properties: {
-            slot: { type: "string", description: "Stable id used in call flow, e.g. preAnswer" },
+            slot: { type: "string", description: "Stable id used in call flow, e.g. createInteraction" },
             name: { type: "string" },
             description: { type: "string" },
             method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH"] },

@@ -1,6 +1,8 @@
 import type { CallSession, IvrFunctionDef } from "../domain/types.js";
 import type { ConfigStore } from "../db/sqlite.js";
 import type { PulseClient } from "../pulse/client.js";
+import type { PulseLifecycle } from "../pulse/lifecycle.js";
+import { addInteractionFieldsForFunction } from "../pulse/lifecycle.js";
 import type { Logger } from "../logging/index.js";
 import type { AriClient } from "../asterisk/ari.js";
 import { genericByName } from "./catalog.js";
@@ -18,6 +20,7 @@ export class IvrFunctionRunner {
   constructor(
     private readonly store: ConfigStore,
     private readonly pulse: PulseClient,
+    private readonly lifecycle: PulseLifecycle,
     private readonly ari: AriClient,
     private readonly log: Logger,
   ) {}
@@ -86,6 +89,25 @@ export class IvrFunctionRunner {
     }
 
     if (def?.kind === "pulse" && def.pulseSlot) {
+      if (def.pulseSlot === "createInteraction") {
+        const r = await this.lifecycle.createInteraction(ctx.session);
+        return { ok: r.ok, hangup: false, repeat: false };
+      }
+      if (def.pulseSlot === "createSession") {
+        const r = await this.lifecycle.createSession(ctx.session);
+        return { ok: r.ok, hangup: false, repeat: false };
+      }
+      if (def.pulseSlot === "closeSession") {
+        await this.lifecycle.closeIfOpen(ctx.session, 1);
+        return { ok: true, hangup: false, repeat: false };
+      }
+      if (def.pulseSlot === "addCallInteraction") {
+        const r = await this.lifecycle.addCallInteraction(
+          ctx.session,
+          addInteractionFieldsForFunction(def.name, arg),
+        );
+        return { ok: r.ok, hangup: false, repeat: false };
+      }
       const body = {
         function: def.name,
         param: arg,

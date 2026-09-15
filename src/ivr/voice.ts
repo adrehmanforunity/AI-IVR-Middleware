@@ -42,7 +42,7 @@ export function resolveVoiceMedia(
   voiceRoot = DEFAULT_VOICE_FILES_PATH,
 ): string {
   const stripped = toAriSound(file);
-  if (!stripped || /^none$/i.test(stripped)) return "";
+  if (!isPlayablePrompt(stripped)) return "";
   if (stripped.includes(":")) return stripped;
   const prefix = ariSoundsPrefix(voiceRoot);
   const norm = stripped.replace(/^\/+/, "");
@@ -51,4 +51,12 @@ export function resolveVoiceMedia(
   }
   const folder = languageFolder(language);
   return `sound:${prefix}/${folder}/${norm}`;
+}
+
+/** Empty, `none`, or a JS `undefined`/`null` string — do not send to Asterisk. */
+export function isPlayablePrompt(file: string | null | undefined): boolean {
+  const s = String(file ?? "").trim();
+  if (!s || /^none$/i.test(s)) return false;
+  if (/^(undefined|null)$/i.test(s)) return false;
+  return true;
 }

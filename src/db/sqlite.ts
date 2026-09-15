@@ -30,12 +30,28 @@ import { MIGRATION_V7 } from "./migrations/007_ivr_document.js";
 import { MIGRATION_V8 } from "./migrations/008_call_progress.js";
 import { MIGRATION_V9 } from "./migrations/009_stations.js";
 import { MIGRATION_V10 } from "./migrations/010_outbound_routes.js";
+import { MIGRATION_V11 } from "./migrations/011_pulse_screen_facts.js";
+import { MIGRATION_V12 } from "./migrations/012_post_call_survey.js";
 import { GENERIC_FUNCTIONS } from "../ivr/catalog.js";
+import { LEGACY_PULSE_SLOTS, LEGACY_SLOT_REMAP, PULSE_API_SEEDS } from "../pulse/seed.js";
+import { PULSE_API_KEY_SETTING } from "../pulse/auth.js";
 import { normalizeSave, normalizeMenu } from "../ivr/document.js";
 import { LAB_SAMPLE_IVR, LAB_SAMPLE_IVR_NAME } from "../ivr/labSample.js";
 import { MENU_DEFAULT_VALUES } from "../ivr/menuDefaults.js";
 import { parseSmtp, SMTP_DEFAULTS, SMTP_SETTING_KEYS, type SmtpConfig } from "../mail/smtp.js";
 import { parseCallerLanguage } from "../calls/progress.js";
+import { effectiveSurveyIvrId } from "../calls/survey.js";
+import {
+  INSTANCE_DESC_KEY,
+  INSTANCE_ID_KEY,
+  INSTANCE_NAME_KEY,
+  newInstanceId,
+  normalizeInstanceDescription,
+  normalizeInstanceId,
+  normalizeInstanceName,
+  parseInstance,
+  type IimInstance,
+} from "../instance/identity.js";
 import { DEFAULT_OWNED_EXT_FROM, DEFAULT_OWNED_EXT_TO, parseOwnedExtensions } from "../calls/match.js";
 
 type TargetRow = {
@@ -116,6 +132,19 @@ export class ConfigStore {
     return this.snapshot?.settings ?? {};
   }
 
+  getInstance(): IimInstance {
+    return parseInstance(this.getSettings());
+  }
+
+  getPulseApiKey(): string {
+    return (this.getSettings()[PULSE_API_KEY_SETTING] ?? "").trim();
+  }
+
+  putPulseApiKey(apiKey: string, actor: string): { keySet: boolean } {
+    this.putSetting(PULSE_API_KEY_SETTING, apiKey.trim(), actor);
+    return { keySet: this.getPulseApiKey().length > 0 };
+  }
+
   putTarget(patch: Partial<Omit<AsteriskTarget, "updatedAt">>, actor: string): AsteriskTarget {
     const current = this.getTarget();
     const next: AsteriskTarget = {
@@ -162,7 +191,25 @@ export class ConfigStore {
   }
 
   putSetting(key: string, value: string, actor: string): void {
-    const stored = key === "pulse_swagger_url" ? normalizeHttpUrl(value) : value;
+    let stored = key === "pulse_swagger_url" ? normalizeHttpUrl(value) : value;
+    if (key === INSTANCE_ID_KEY) {
+      stored = normalizeInstanceId(value);
+      if (!stored) {
+        throw Object.assign(
+          new Error("instance id must be 2–64 letters, numbers, dots, hyphens, or underscores"),
+          { code: "BAD_REQUEST" },
+        );
+      }
+    }
+    if (key === INSTANCE_NAME_KEY) {
+      stored = normalizeInstanceName(value);
+      if (!stored) {
+        throw Object.assign(new Error("instance name is required"), { code: "BAD_REQUEST" });
+      }
+    }
+    if (key === INSTANCE_DESC_KEY) {
+      stored = normalizeInstanceDescription(value);
+    }
     this.runWrite(() => {
       const db = this.requireDb();
       db.prepare(
@@ -327,16 +374,22 @@ export class ConfigStore {
       matchTrunk?: string;
       maxConcurrent?: number;
       ivrId?: number | null;
+      postCallSurveyEnabled?: boolean;
+      postCallSurveyIvrId?: number | null;
     },
     actor: string,
   ): CallSetup {
     const now = new Date().toISOString();
+    const surveyOn = input.postCallSurveyEnabled === true;
+    const surveyIvr = input.postCallSurveyIvrId ?? null;
+    requireSurveyIvr(surveyOn, surveyIvr);
     let id = 0;
     this.runWrite(() => {
       const r = this.requireDb()
         .prepare(
-          `INSERT INTO call_setups (name, enabled, match_did, match_trunk, max_concurrent, ivr_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO call_setups (name, enabled, match_did, match_trunk, max_concurrent, ivr_id,
+            post_call_survey_enabled, post_call_survey_ivr_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.name,
@@ -345,6 +398,8 @@ export class ConfigStore {
           input.matchTrunk?.trim() || null,
           input.maxConcurrent ?? 10,
           input.ivrId ?? null,
+          surveyOn ? 1 : 0,
+          surveyIvr,
           now,
           now,
         );
@@ -370,12 +425,17 @@ export class ConfigStore {
       matchTrunk: patch.matchTrunk !== undefined ? patch.matchTrunk : current.matchTrunk,
       maxConcurrent: patch.maxConcurrent ?? current.maxConcurrent,
       ivrId: patch.ivrId !== undefined ? patch.ivrId : current.ivrId,
+      postCallSurveyEnabled: patch.postCallSurveyEnabled ?? current.postCallSurveyEnabled,
+      postCallSurveyIvrId:
+        patch.postCallSurveyIvrId !== undefined ? patch.postCallSurveyIvrId : current.postCallSurveyIvrId,
     };
+    requireSurveyIvr(next.postCallSurveyEnabled, next.postCallSurveyIvrId);
     const now = new Date().toISOString();
     this.runWrite(() => {
       this.requireDb()
         .prepare(
-          `UPDATE call_setups SET name=?, enabled=?, match_did=?, match_trunk=?, max_concurrent=?, ivr_id=?, updated_at=?
+          `UPDATE call_setups SET name=?, enabled=?, match_did=?, match_trunk=?, max_concurrent=?, ivr_id=?,
+            post_call_survey_enabled=?, post_call_survey_ivr_id=?, updated_at=?
            WHERE id=?`,
         )
         .run(
@@ -385,6 +445,8 @@ export class ConfigStore {
           next.matchTrunk.trim() || null,
           next.maxConcurrent,
           next.ivrId,
+          next.postCallSurveyEnabled ? 1 : 0,
+          next.postCallSurveyIvrId,
           now,
           id,
         );
@@ -429,15 +491,29 @@ export class ConfigStore {
       throw Object.assign(new Error("name and trunk are required"), { code: "BAD_REQUEST" });
     }
     const audience = normalizeAudience(input.audience);
+    const surveyOn = input.postCallSurveyEnabled === true;
+    const surveyIvr = input.postCallSurveyIvrId ?? null;
+    requireSurveyIvr(surveyOn, surveyIvr);
     const now = new Date().toISOString();
     let id = 0;
     this.runWrite(() => {
       const r = this.requireDb()
         .prepare(
-          `INSERT INTO outbound_routes (name, description, trunk, audience, enabled, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO outbound_routes (name, description, trunk, audience, enabled,
+            post_call_survey_enabled, post_call_survey_ivr_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(name, (input.description ?? "").trim(), trunk, audience, input.enabled === false ? 0 : 1, now, now);
+        .run(
+          name,
+          (input.description ?? "").trim(),
+          trunk,
+          audience,
+          input.enabled === false ? 0 : 1,
+          surveyOn ? 1 : 0,
+          surveyIvr,
+          now,
+          now,
+        );
       id = Number(r.lastInsertRowid);
       this.requireDb()
         .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
@@ -457,17 +533,32 @@ export class ConfigStore {
       trunk: (patch.trunk ?? current.trunk).trim(),
       audience: patch.audience ? normalizeAudience(patch.audience) : current.audience,
       enabled: patch.enabled ?? current.enabled,
+      postCallSurveyEnabled: patch.postCallSurveyEnabled ?? current.postCallSurveyEnabled,
+      postCallSurveyIvrId:
+        patch.postCallSurveyIvrId !== undefined ? patch.postCallSurveyIvrId : current.postCallSurveyIvrId,
     };
     if (!next.name || !next.trunk) {
       throw Object.assign(new Error("name and trunk are required"), { code: "BAD_REQUEST" });
     }
+    requireSurveyIvr(next.postCallSurveyEnabled, next.postCallSurveyIvrId);
     const now = new Date().toISOString();
     this.runWrite(() => {
       this.requireDb()
         .prepare(
-          `UPDATE outbound_routes SET name=?, description=?, trunk=?, audience=?, enabled=?, updated_at=? WHERE id=?`,
+          `UPDATE outbound_routes SET name=?, description=?, trunk=?, audience=?, enabled=?,
+            post_call_survey_enabled=?, post_call_survey_ivr_id=?, updated_at=? WHERE id=?`,
         )
-        .run(next.name, next.description, next.trunk, next.audience, next.enabled ? 1 : 0, now, id);
+        .run(
+          next.name,
+          next.description,
+          next.trunk,
+          next.audience,
+          next.enabled ? 1 : 0,
+          next.postCallSurveyEnabled ? 1 : 0,
+          next.postCallSurveyIvrId,
+          now,
+          id,
+        );
       this.requireDb()
         .prepare("INSERT INTO audit_log (at, actor, action, detail) VALUES (?, ?, ?, ?)")
         .run(now, actor, "update_outbound_route", JSON.stringify({ id }));
@@ -835,8 +926,9 @@ export class ConfigStore {
             `INSERT INTO call_sessions (
               session_id, unique_id, channel, setup_id, interaction_id, caller_id, did, trunk,
               state, caller_type, ivr_pointer, customer_json, reject_reason, started_at, ended_at,
-              pulse_session_id, agent_id, agent_extension, bridge_id, language, queue_position, expected_wait_sec
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              pulse_session_id, agent_id, agent_extension, bridge_id, language, queue_position, expected_wait_sec,
+              is_cli_already_exist, ivr_routing, is_priority, is_high_alert, recording_relative_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
               unique_id=excluded.unique_id,
               channel=excluded.channel,
@@ -857,7 +949,12 @@ export class ConfigStore {
               bridge_id=excluded.bridge_id,
               language=excluded.language,
               queue_position=excluded.queue_position,
-              expected_wait_sec=excluded.expected_wait_sec`,
+              expected_wait_sec=excluded.expected_wait_sec,
+              is_cli_already_exist=excluded.is_cli_already_exist,
+              ivr_routing=excluded.ivr_routing,
+              is_priority=excluded.is_priority,
+              is_high_alert=excluded.is_high_alert,
+              recording_relative_path=excluded.recording_relative_path`,
           )
           .run(
             session.internalId,
@@ -882,6 +979,11 @@ export class ConfigStore {
             session.language,
             session.queuePosition,
             session.expectedWaitSec,
+            sqlBool(session.isCliAlreadyExist),
+            session.ivrRouting,
+            sqlBool(session.isPriority),
+            sqlBool(session.isHighAlert),
+            session.recordingRelativePath || "",
           );
       });
     } catch {
@@ -1091,12 +1193,33 @@ export class ConfigStore {
     if (version < 10) {
       db.exec(MIGRATION_V10);
       db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '10')").run();
+      version = 10;
+    }
+    if (version < 11) {
+      for (const stmt of MIGRATION_V11.split(";").map((s) => s.trim()).filter(Boolean)) {
+        try {
+          db.exec(`${stmt};`);
+        } catch {
+          /* column already present */
+        }
+      }
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '11')").run();
+      version = 11;
+    }
+    if (version < 12) {
+      for (const stmt of MIGRATION_V12.split(";").map((s) => s.trim()).filter(Boolean)) {
+        try {
+          db.exec(`${stmt};`);
+        } catch {
+          /* column already present */
+        }
+      }
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '12')").run();
     }
   }
 
   private ensureCallMgmtSeed(): void {
     if (!this.db) return;
-    const now = new Date().toISOString();
     this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('telephony_desired', 'connect')").run();
     this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('telephony_retry_delay_ms', '5000')").run();
     this.db
@@ -1136,6 +1259,14 @@ export class ConfigStore {
     this.db
       .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('pulse_swagger_url', ?)")
       .run("https://petstore.swagger.io/");
+    this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(INSTANCE_ID_KEY, newInstanceId());
+    this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(INSTANCE_NAME_KEY, "IIM");
+    this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(INSTANCE_DESC_KEY, "");
+    const instanceId = setting(INSTANCE_ID_KEY);
+    if (!instanceId?.trim()) {
+      this.db.prepare("UPDATE settings SET value = ? WHERE key = ?").run(newInstanceId(), INSTANCE_ID_KEY);
+    }
+    this.db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, '')").run(PULSE_API_KEY_SETTING);
     const smtpSeed: Array<[string, string]> = [
       [SMTP_SETTING_KEYS.enabled, SMTP_DEFAULTS.enabled ? "1" : "0"],
       [SMTP_SETTING_KEYS.host, SMTP_DEFAULTS.host],
@@ -1162,113 +1293,51 @@ export class ConfigStore {
     this.db
       .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('voice_files_path', ?)")
       .run("/var/lib/asterisk/sounds/custom");
-    const seeds: Array<{
-      slot: string;
-      name: string;
-      description: string;
-      mockJson: string;
-      mockStatus: number;
-      enabled?: number;
-    }> = [
-      {
-        slot: "preAnswer",
-        name: "Pre-answer",
-        description: "Before answer: send CallerID, DID, trunk. Expect interactionId or rejectReason.",
-        mockJson: JSON.stringify({ interactionId: "int-sample-001", accept: true }, null, 2),
-        mockStatus: 200,
-      },
-      {
-        slot: "startSession",
-        name: "Start session",
-        description: "After interaction: return PULSE session id, caller type, and customer snapshot.",
-        mockJson: JSON.stringify(
-          {
-            customer: { id: "cust-1001", name: "Sample Customer", ani: "03001234567" },
-            callerType: "existing",
-            currentMenu: "main-menu",
-            pulseSessionId: "sess-sample-001",
-          },
-          null,
-          2,
-        ),
-        mockStatus: 200,
-      },
-      {
-        slot: "enqueue",
-        name: "Enqueue",
-        description: "Place the caller in a PULSE queue.",
-        mockJson: JSON.stringify({ queueId: "sales", position: 3, estimatedWaitSec: 45 }, null, 2),
-        mockStatus: 200,
-      },
-      {
-        slot: "agentConnect",
-        name: "Agent connect",
-        description: "An agent answered the live call.",
-        mockJson: JSON.stringify({ agentId: "ag-42", agentName: "Sample Agent", extension: "1001" }, null, 2),
-        mockStatus: 200,
-      },
-      {
-        slot: "hold",
-        name: "Hold",
-        description: "Caller placed on hold.",
-        mockJson: JSON.stringify({ ok: true }, null, 2),
-        mockStatus: 200,
-      },
-      {
-        slot: "transfer",
-        name: "Transfer",
-        description: "Blind or attended transfer to another destination.",
-        mockJson: JSON.stringify({ ok: true, target: "8001" }, null, 2),
-        mockStatus: 200,
-      },
-      {
-        slot: "hangup",
-        name: "Hangup / wrap-up",
-        description: "Call ended; send duration and last state.",
-        mockJson: JSON.stringify({ ok: true }, null, 2),
-        mockStatus: 200,
-      },
-      {
-        slot: "ivrStep",
-        name: "IVR step",
-        description: "Notify PULSE of an IVR menu choice.",
-        mockJson: JSON.stringify({ nextPointer: "billing" }, null, 2),
-        mockStatus: 200,
-      },
-      {
-        slot: "aicb",
-        name: "AICB (all inbound channels busy)",
-        description:
-          "Inbound route cap reached. IIM already rejects the overflow call with busy. Enable and set an endpoint to report AICB to PULSE (callerId, DID, trunk, occupying sessions).",
-        mockJson: JSON.stringify({ ok: true, event: "AICB" }, null, 2),
-        mockStatus: 200,
-        enabled: 0,
-      },
-    ];
-    const ins = this.db.prepare(
-      `INSERT OR IGNORE INTO pulse_apis (
-        slot, method, endpoint, timeout_ms, retries, updated_at,
-        display_name, description, mock_enabled, mock_json, mock_status, mock_error, enabled
-      ) VALUES (?, 'POST', '', 5000, 0, ?, ?, ?, 0, ?, ?, NULL, ?)`,
-    );
-    const fillMock = this.db.prepare(
-      `UPDATE pulse_apis SET mock_json = ?, mock_status = ?
-       WHERE slot = ? AND (mock_json IS NULL OR mock_json = '')`,
-    );
-    const fillName = this.db.prepare(
-      `UPDATE pulse_apis SET display_name = ? WHERE slot = ? AND (display_name IS NULL OR display_name = '')`,
-    );
-    for (const s of seeds) {
-      ins.run(s.slot, now, s.name, s.description, s.mockJson, s.mockStatus, s.enabled ?? 1);
-      fillMock.run(s.mockJson, s.mockStatus, s.slot);
-      fillName.run(s.name, s.slot);
-    }
+    this.seedPulseApisFromCatalog();
     const ivrCount = this.db.prepare("SELECT COUNT(*) AS n FROM ivrs").get() as { n: number };
     if (ivrCount.n === 0) {
       this.createIvr(PULSE_IVR_SEED, "seed");
     }
     this.ensureLabSampleIvr();
     this.ensureIvrAnswerSteps();
+  }
+
+  private seedPulseApisFromCatalog(): void {
+    if (!this.db) return;
+    const now = new Date().toISOString();
+    for (const [from, to] of Object.entries(LEGACY_SLOT_REMAP)) {
+      this.db.prepare("UPDATE ivr_functions SET pulse_slot = ? WHERE pulse_slot = ?").run(to, from);
+    }
+    const placeholders = LEGACY_PULSE_SLOTS.map(() => "?").join(",");
+    this.db.prepare(`DELETE FROM pulse_apis WHERE slot IN (${placeholders})`).run(...LEGACY_PULSE_SLOTS);
+    const ins = this.db.prepare(
+      `INSERT OR IGNORE INTO pulse_apis (
+        slot, method, endpoint, timeout_ms, retries, updated_at,
+        display_name, description, mock_enabled, mock_json, mock_status, mock_error, enabled
+      ) VALUES (?, 'POST', '', 5000, 0, ?, ?, ?, 1, ?, 200, NULL, 1)`,
+    );
+    const fillMock = this.db.prepare(
+      `UPDATE pulse_apis SET mock_json = ?, mock_status = 200
+       WHERE slot = ? AND (mock_json IS NULL OR mock_json = '')`,
+    );
+    const fillName = this.db.prepare(
+      `UPDATE pulse_apis SET display_name = ? WHERE slot = ? AND (display_name IS NULL OR display_name = '')`,
+    );
+    const fillDesc = this.db.prepare(
+      `UPDATE pulse_apis SET description = ? WHERE slot = ? AND (description IS NULL OR description = '')`,
+    );
+    const clearRelative = this.db.prepare(
+      `UPDATE pulse_apis SET endpoint = ''
+       WHERE slot = ? AND endpoint != '' AND endpoint NOT LIKE 'http://%' AND endpoint NOT LIKE 'https://%'`,
+    );
+    for (const s of PULSE_API_SEEDS) {
+      const mockJson = JSON.stringify(s.mock, null, 2);
+      ins.run(s.slot, now, s.name, s.description, mockJson);
+      fillMock.run(mockJson, s.slot);
+      fillName.run(s.name, s.slot);
+      fillDesc.run(s.description, s.slot);
+      clearRelative.run(s.slot);
+    }
   }
 
   private ensureLabSampleIvr(): void {
@@ -1436,6 +1505,8 @@ type SetupRow = {
   match_trunk: string | null;
   max_concurrent: number;
   ivr_id?: number | null;
+  post_call_survey_enabled?: number | null;
+  post_call_survey_ivr_id?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -1479,6 +1550,11 @@ type SessionRow = {
   language?: number | null;
   queue_position?: number | null;
   expected_wait_sec?: number | null;
+  is_cli_already_exist?: number | null;
+  ivr_routing?: number | null;
+  is_priority?: number | null;
+  is_high_alert?: number | null;
+  recording_relative_path?: string | null;
 };
 
 type IvrRow = {
@@ -1709,6 +1785,8 @@ function mapSetup(row: SetupRow): CallSetup {
     matchTrunk: row.match_trunk ?? "",
     maxConcurrent: row.max_concurrent,
     ivrId: row.ivr_id ?? null,
+    postCallSurveyEnabled: row.post_call_survey_enabled === 1,
+    postCallSurveyIvrId: row.post_call_survey_ivr_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1721,6 +1799,8 @@ type OutboundRow = {
   trunk: string;
   audience: string;
   enabled: number;
+  post_call_survey_enabled?: number | null;
+  post_call_survey_ivr_id?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -1739,6 +1819,8 @@ function mapOutbound(row: OutboundRow): OutboundRoute {
     trunk: row.trunk,
     audience: normalizeAudience(row.audience),
     enabled: row.enabled === 1,
+    postCallSurveyEnabled: row.post_call_survey_enabled === 1,
+    postCallSurveyIvrId: row.post_call_survey_ivr_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1785,6 +1867,22 @@ function migratePulseApiColumns(db: DatabaseSync): void {
   }
 }
 
+function requireSurveyIvr(enabled: boolean, ivrId: number | null): void {
+  if (enabled && !effectiveSurveyIvrId(true, ivrId)) {
+    throw Object.assign(new Error("post-call survey needs an IVR"), { code: "BAD_REQUEST" });
+  }
+}
+
+function sqlBool(value: boolean | null | undefined): number | null {
+  if (value == null) return null;
+  return value ? 1 : 0;
+}
+
+function fromSqlBool(value: number | null | undefined): boolean | null {
+  if (value == null) return null;
+  return value === 1;
+}
+
 function mapSession(row: SessionRow): CallSession {
   let customer: unknown = null;
   if (row.customer_json) {
@@ -1814,7 +1912,14 @@ function mapSession(row: SessionRow): CallSession {
     expectedWaitSec: row.expected_wait_sec ?? null,
     callerType: row.caller_type,
     customer,
+    isCliAlreadyExist: fromSqlBool(row.is_cli_already_exist),
+    ivrRouting: row.ivr_routing ?? null,
+    isPriority: fromSqlBool(row.is_priority),
+    isHighAlert: fromSqlBool(row.is_high_alert),
+    recordingRelativePath: row.recording_relative_path ?? "",
+    postCallSurveyIvrId: null,
     rejectReason: row.reject_reason,
+    pulseClosed: false,
     startedAt: row.started_at,
     endedAt: row.ended_at,
   };

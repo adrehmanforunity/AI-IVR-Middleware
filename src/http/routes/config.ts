@@ -110,7 +110,7 @@ export async function registerConfigRoutes(app: FastifyInstance, store: ConfigSt
     },
     async () => {
       const raw = store.getSettings();
-      const { smtp_password: _, ...rest } = raw;
+      const { smtp_password: _smtp, pulse_api_key: _pulse, ...rest } = raw;
       return rest;
     },
   );

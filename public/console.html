@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Console — IIM</title>
+    <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
+    <link rel="stylesheet" href="/css/iim.css?v=15" />
+  </head>
+  <body data-nav="/console">
+    <div class="page">
+      <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+        <div class="container-fluid" id="iim-sidebar"></div>
+      </aside>
+      <div class="page-wrapper">
+        <div id="iim-top"></div>
+        <div class="page-body">
+          <div class="container-xl">
+            <div class="page-header d-print-none">
+              <div class="page-pretitle">IIM</div>
+              <h2 class="page-title">Console</h2>
+              <div class="text-secondary">
+                Same JSON lines as the Node terminal. At most 250 lines, two viewers, batched every
+                ¼s. Pause closes the stream so the process is not feeding a frozen tab. Hourly files:
+                <a href="/logs">Download logs</a>.
+              </div>
+            </div>
+            <div class="card console-card" id="console-card">
+              <div class="card-body">
+                <div class="console-toolbar">
+                  <button class="btn btn-primary" type="button" id="pause">Pause</button>
+                  <button class="btn btn-outline-secondary" type="button" id="copy">Copy</button>
+                  <button class="btn btn-outline-secondary" type="button" id="save">Save to file</button>
+                  <button class="btn btn-outline-secondary" type="button" id="clear">Clear view</button>
+                  <button class="btn btn-outline-secondary" type="button" id="expand">Expand</button>
+                  <button class="btn btn-outline-secondary" type="button" id="fullscreen">Full screen</button>
+                  <label class="check">
+                    <input id="follow" type="checkbox" checked />
+                    Follow
+                  </label>
+                  <span class="muted" id="status">Connecting…</span>
+                </div>
+                <pre class="log-pane console-pane" id="pane"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/vendor/tabler/tabler.min.js"></script>
+    <script src="/js/icons.js?v=3"></script>
+    <script src="/js/layout.js?v=6"></script>
+    <script src="/js/user-menu.js?v=6"></script>
+    <script src="/js/console.js?v=3"></script>
+  </body>
+</html>

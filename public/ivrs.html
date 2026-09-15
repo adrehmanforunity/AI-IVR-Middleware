@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>IVRs — IIM</title>
     <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
-    <link rel="stylesheet" href="/css/iim.css?v=12" />
+    <link rel="stylesheet" href="/css/iim.css?v=15" />
   </head>
   <body data-nav="/ivrs">
     <div class="page">
@@ -24,11 +24,13 @@
           </div>
 
           <section class="panel">
-            <div class="row" style="justify-content: space-between; align-items: center">
-              <h3 style="margin: 0">Defined IVRs</h3>
-              <button class="btn ghost" type="button" id="import-json">Import JSON</button>
-              <input id="import-file" type="file" accept="application/json,.json" hidden />
-              <button class="btn" type="button" id="new-ivr">New IVR</button>
+            <div class="panel-head">
+              <h3>Defined IVRs</h3>
+              <div class="btn-row" style="margin: 0">
+                <button class="btn btn-outline-secondary" type="button" id="import-json">Import JSON</button>
+                <input id="import-file" type="file" accept="application/json,.json" hidden />
+                <button class="btn btn-primary" type="button" id="new-ivr">New IVR</button>
+              </div>
             </div>
             <div id="list" class="muted" style="margin-top: 12px">Loading…</div>
           </section>
@@ -51,17 +53,17 @@
                 <div>
                   <div class="muted" style="margin-bottom: 8px">Menus</div>
                   <div id="step-nav" class="step-nav"></div>
-                  <button class="btn ghost" type="button" id="add-menu" style="margin-top: 8px; width: 100%">
+                  <button class="btn btn-outline-secondary" type="button" id="add-menu" style="margin-top: 8px; width: 100%">
                     Add menu
                   </button>
                 </div>
                 <div id="step-form"></div>
               </div>
-              <div class="row" style="margin-top: 16px">
-                <button class="btn" type="submit">Save IVR</button>
-                <button class="btn ghost" type="button" id="export-json">Export JSON</button>
-                <button class="btn ghost" type="button" id="open-flow">Open flow</button>
-                <button class="btn ghost" type="button" id="close-editor">Close</button>
+              <div class="btn-row" style="margin-top: 16px">
+                <button class="btn btn-primary" type="submit">Save IVR</button>
+                <button class="btn btn-outline-secondary" type="button" id="export-json">Export JSON</button>
+                <button class="btn btn-outline-secondary" type="button" id="open-flow">Open flow</button>
+                <button class="btn btn-outline-secondary" type="button" id="close-editor">Close</button>
                 <span class="muted" id="msg"></span>
               </div>
             </form>
@@ -71,9 +73,9 @@
       </div>
     </div>
     <script src="/vendor/tabler/tabler.min.js"></script>
-    <script src="/js/icons.js?v=1"></script>
-    <script src="/js/layout.js?v=2"></script>
-    <script src="/js/user-menu.js?v=4"></script>
-    <script src="/js/ivrs.js?v=8"></script>
+    <script src="/js/icons.js?v=3"></script>
+    <script src="/js/layout.js?v=6"></script>
+    <script src="/js/user-menu.js?v=6"></script>
+    <script src="/js/ivrs.js?v=9"></script>
   </body>
 </html>

@@ -54,8 +54,8 @@ async function refresh() {
           <td class="api-id">${esc(f.pulseSlot)}</td>
           <td>${f.enabled ? '<span class="tag on">ON</span>' : '<span class="tag off">OFF</span>'}</td>
           <td>
-            <button class="btn ghost" type="button" data-edit="${f.id}">Edit</button>
-            <button class="btn ghost" type="button" data-del="${f.id}">Remove</button>
+            <button class="btn btn-outline-secondary" type="button" data-edit="${f.id}">Edit</button>
+            <button class="btn btn-outline-secondary" type="button" data-del="${f.id}">Remove</button>
           </td>
         </tr>`,
         )

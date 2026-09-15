@@ -2,20 +2,24 @@
 
 Unattended Node.js control plane between **Asterisk** (AMI + ARI) and **PULSE CX**.
 
-IIM does **not** own customers, agents, or queues. It admits inbound channels that land in Stasis, runs an **IVR program** you define, and calls PULSE only when that program says so. Version **0.1.0** — lab-proven; not a packaged production product yet.
+IIM does **not** own customers, agents, or queues. It admits inbound channels that land in Stasis, runs an **IVR program** you define, and calls PULSE when the engine or that program says so. Version **0.1.0** — lab-proven; not a packaged production product yet.
 
 ## What it does
 
 | Piece | Role |
 | --- | --- |
-| **ARI** | All call control: answer, play, DTMF, hangup. Inbound = Stasis app (lab: `pulse-pbx-app`). |
+| **ARI** | All call control: answer, play, DTMF, hangup. Inbound = Stasis app (lab dialplan: `pulse-pbx-app`; set the same name on IIM Setup). |
 | **AMI** | Stay logged in (keepalive). Not used for admit, hangup, or IVR. |
-| **Call setups** | Match DID and/or trunk, concurrency cap, enable/drain, which IVR to run. |
+| **Instance** | Each process has its own ID, name, and description (IIM Setup). Use a **separate SQLite file** (`SQLITE_PATH`) per running copy. |
+| **Inbound routing** | Match DID and/or trunk, concurrency cap, enable/drain, which IVR to start, optional **post-call survey (CSAT)** IVR. |
+| **Outbound routing** | Which trunk IIM uses when it places a call (robo, agents, or both), plus optional CSAT IVR. |
 | **IVRs** | One or more programs: steps that play, collect digits, call functions, then goto or hangup. |
 | **Functions** | Generic (`answer`, `hangup`, `proc_createinteraction`, …) plus **custom** names wired to a PULSE API. Each function returns true or false. |
-| **PULSE APIs** | Stored endpoints (URL, timeout, retries, mock). Invoked from IVR **Do** rows, including before answer. |
+| **PULSE APIs** | One **full URL per row** (no shared base URL). Optional process-wide API key (`X-API-KEY` + `Authorization`). Mock JSON when the URL is empty. |
 
-Stations **3001–3999** (configurable on Telephony Setup) are IIM PBX phones. Other extensions (for example **2098**) are ignored unless that channel enters IIM Stasis. Lab: 2098 dials DID **7777** → Stasis → setup match.
+Stations **3001–3999** (configurable on IIM Setup) are IIM PBX phones. Other extensions (for example **2098**) are ignored unless that channel enters IIM Stasis. Lab: 2098 dials DID **7777** → Stasis → inbound route match.
+
+Voice files live on **Asterisk** (`/var/lib/asterisk/sounds/custom/…`), not on the Windows IIM host.
 
 ## Quick start
 
@@ -23,30 +27,37 @@ Stations **3001–3999** (configurable on Telephony Setup) are IIM PBX phones. O
 cp .env.example .env
 mkdir logs
 npm install
-npm run build
-npm start
+npx tsx src/index.ts
 ```
 
-Node **22+**. Bind host/port from `.env` (`HOST`, `PORT`; lab often `127.0.0.1:3020`).
+Or `npm run build` then `npm start`. After `src/` changes, restart the process.
+
+Node **22+**. Bind host/port from `.env` (`HOST`, `PORT`; lab often `127.0.0.1:3000`).
 
 | URL | Purpose |
 | --- | --- |
 | `/` | Superadmin login |
 | `/app` | Live dashboard |
+| `/telephony` | **IIM Setup** — instance identity, AMI/ARI, owned stations, voice path, menu defaults, PULSE Swagger URL |
 | `/stations` | IIM-owned extensions (status + directory) |
-| `/setups` | DID/trunk admission + attach IVR |
+| `/setups` | Inbound DID/trunk routing + IVR + CSAT |
+| `/outbound` | Outbound trunks + CSAT |
 | `/ivrs` | IVR programs (When / Do / Then) |
 | `/functions` | Generic catalog + custom functions |
-| `/pulse` | PULSE API endpoints and mocks |
-| `/telephony` | AMI/ARI target, connect/disconnect, owned extensions, PULSE Swagger URL, log tail |
-| `/docs` | IIM Swagger (session or `X-API-Key`; Try it out uses the API key) |
-| `/health` | Process up |
-| `/ready` | SQLite + AMI/ARI when telephony is **connect** (setup drain does **not** fail ready) |
+| `/pulse` | PULSE API endpoints, one key, mocks |
+| `/alerts` | SMTP |
+| `/console` | Live log console |
+| `/logs` | Download hourly logs |
+| `/docs` | IIM Swagger (session or `X-API-Key`) |
+| `/health` | Process up + host + instance |
+| `/ready` | SQLite + AMI/ARI when those links are **connect** (setup drain does **not** fail ready) |
 | `/v1/*` | API: `X-API-Key` **or** signed UI session cookie |
 
-First boot seeds `SUPERADMIN_USER` / `SUPERADMIN_PASSWORD` (defaults `superadmin` / `changeme`) hashed in SQLite. Change password from the **top-right avatar** menu (not the dashboard). Env only seeds if no user exists yet.
+First boot seeds `SUPERADMIN_USER` / `SUPERADMIN_PASSWORD` (defaults `superadmin` / `changeme`) hashed in SQLite. Change password from the **top-right avatar** menu. Env only seeds if no user exists yet.
 
 Asterisk passwords in `.env` (`AMI_PASSWORD`, `ARI_PASSWORD`) override anything stored in SQLite. Do not commit `.env`.
+
+Running more than one IIM: give each process its own `SQLITE_PATH`, `PORT`, and instance ID/name on IIM Setup.
 
 ## Inbound path
 
@@ -56,16 +67,23 @@ FreePBX inbound routes jump with `EXTEN=s`. Custom Destination Target must be:
 iim-inbound,s,1
 ```
 
-Return: **No**. Dialplan: `asterisk/extensions_iim.conf` (paste into `extensions_custom.conf`, `fwconsole reload`). It picks DID from `FROM_DID` / DNID, then `Stasis(pulse-pbx-app)`.
+Return: **No**. Dialplan: `asterisk/extensions_iim.conf` (paste into `extensions_custom.conf`, `fwconsole reload`). It picks DID from `FROM_DID` / DNID, then `Stasis(pulse-pbx-app)` — the ARI application name on IIM Setup must match.
 
 Runtime:
 
-1. ARI `StasisStart` → match a **call setup** (DID/trunk, enabled, under `maxConcurrent`).
+1. ARI `StasisStart` → match an **inbound route** (DID/trunk, enabled, under `maxConcurrent`).
 2. Unknown / drain / busy → ARI hangup (`rejected` or `busy`). Slot is reserved when the call is admitted.
-3. If the setup has an IVR, the **script starts unanswered**. `answer` is an IVR function. Typical PULSE starter: `proc_createinteraction` → `proc_createsession` → `answer` → prompts.
-4. If the setup has **no** IVR, IIM answers and holds.
+3. **Create Interaction** then **Create Session** run **while ringing**, before answer or reject. If either API is enabled (live URL or mock) and fails, the channel is rejected unanswered.
+4. If the route has an IVR, the **script starts unanswered**. `answer` is an IVR function. Extra `proc_createinteraction` / `proc_createsession` steps are skipped if ids already exist.
+5. If the route has **no** IVR, IIM answers after a successful Pulse screen (or immediately if those APIs are disabled).
 
-Sounds are **Asterisk names** (for example `hello-world`), not files on the Windows box.
+If Pulse returns `{ responseBody: … }`, IIM unwraps it. Create Interaction also stores `isCliAlreadyExist` and `ivrRouting`. Create Session also stores `isPriority`, `isHighAlert`, and `recordingRelativePath`.
+
+**Close Session** runs whenever both Pulse ids exist (IVR hangup or caller drop), with several retries, then gives up. It is not a new interaction.
+
+**Add Interaction** (`CallInteraction/Add`) sends Pulse fields from the live call (`interactionId`, `sessionId`, queue ids, `action`).
+
+Sounds are **Asterisk names** (for example `custom/urdu/BOK_GREETINGS`), not files on the Windows box.
 
 ## IVR programs
 
@@ -73,9 +91,11 @@ Each IVR is a list of steps. A step: play (or `none`), wait seconds (`0` = run i
 
 **When** (`1`, `*`, `#`, `none`, `MaxTries`) → **Do** (function + optional param) → **Then if OK** / **Then if failed**.
 
-`proc_*` functions return boolean. Success and fail are just next step or hangup — the user edits both. Custom functions live under `/functions` and point at a PULSE slot.
+`proc_*` functions return boolean. Success and fail are just next step or hangup. Custom functions live under `/functions` and point at a PULSE slot.
 
-Attach the IVR on **Call setups**. Lab IVR: answer → play greeting → collect. **PULSE starter**: create interaction/session first; fail can hang up without answer if you program it that way.
+Attach the inbound IVR on **Inbound routing**. Survey IVR is a **different** program on the same page (or on outbound routing): one menu or many levels. It must reuse the live Pulse interaction/session — never Create Interaction / Create Session again.
+
+Post-call survey is **CSAT** (customer satisfaction), not CSTA. It is stored on the route today. It will run only when the **agent** hangs up; if the caller drops first, IIM skips survey and closes the session. That hangup path is not wired yet (no agent-bridge control in this build).
 
 ## Call record (progress + logs)
 
@@ -84,8 +104,10 @@ Every admitted call carries:
 | Field | Source |
 | --- | --- |
 | `internalId` | GUID created by IIM |
-| `interactionId` | PULSE create-interaction |
-| `pulseSessionId` | PULSE create-session |
+| `interactionId` | PULSE Create Interaction |
+| `pulseSessionId` | PULSE Create Session |
+| `isCliAlreadyExist` / `ivrRouting` | Create Interaction |
+| `isPriority` / `isHighAlert` / `recordingRelativePath` | Create Session |
 | `agentId` / `agentExtension` | PULSE when a transfer is required |
 | `uniqueId` | Asterisk channel Uniqueid |
 | `bridgeId` | Asterisk bridge when caller and agent are joined |
@@ -93,6 +115,7 @@ Every admitted call carries:
 | `currentMenu` | Current IVR step key |
 | `queuePosition` / `expectedWaitSec` | PULSE queue facts |
 | `callerType` | PULSE |
+| `postCallSurveyIvrId` | Copied from the inbound route when CSAT is on |
 
 The same fields are included on call-related log lines (`callsInternalId`, `callInteractionId`, `callSessionId`, …).
 
@@ -100,11 +123,11 @@ The same fields are included on call-related log lines (`callsInternalId`, `call
 
 | Switch | Effect |
 | --- | --- |
-| **Setup `enabled`** | New calls on that DID/trunk. Off = drain. AMI/ARI stay connected. Wait until live count is 0 before maintenance. |
+| **Route `enabled`** | New calls on that DID/trunk. Off = drain. AMI/ARI stay connected. Wait until live count is 0 before maintenance. |
 | **AMI connect** | AMI TCP only; retry while enabled. |
 | **ARI connect** | ARI REST + WebSocket only; retry while enabled. |
 
-IIM stations (default **3001–3999**) are set on `/telephony`. Env `IIM_OWNED_EXT_FROM` / `IIM_OWNED_EXT_TO` override SQLite.
+IIM stations (default **3001–3999**) are set on IIM Setup. Env `IIM_OWNED_EXT_FROM` / `IIM_OWNED_EXT_TO` override SQLite.
 
 ## Logging
 
@@ -127,11 +150,11 @@ Secrets (`api_key`, Basic auth, AMI `Secret`) are redacted as `***`.
 
 Local time, one set of files per hour. `LOG_LEVEL=debug` adds app noise in `.log`; AMI/ARI wire is always dumped.
 
-Look for `process startup` / `startup complete` / `process shutdown`, and per call `IVR started`, `answered`, `IVR hangup`, `IVR shutdown`, `call shutdown`.
+Look for `IIM instance identity`, `process startup` / `startup complete` / `process shutdown`, `Create Interaction ok`, `Create Session ok`, `Close Session ok`, and per call `IVR started`, `answered`, `IVR hangup`, `call shutdown`.
 
 ## UI security
 
-Admin HTML is **not** a public static file. `/app`, `/setups`, `/ivrs`, `/functions`, `/pulse`, `/telephony`, and `/docs` require a signed `iim_sid` cookie (or `X-API-Key` for `/docs` and `/v1`). Anonymous browsers are sent to `/`. Logged-in browsers hitting `/` go to `/app`. Raw `*.html` URLs return 404.
+Admin HTML is **not** a public static file. Pages under the sidebar and `/docs` require a signed `iim_sid` cookie (or `X-API-Key` for `/docs` and `/v1`). Anonymous browsers are sent to `/`. Logged-in browsers hitting `/` go to `/app`. Raw `*.html` URLs return 404.
 
 Session cookie: `httpOnly`, `sameSite=strict`, signed with `API_KEY`. Set `COOKIE_SECURE=true` when the UI is served over HTTPS.
 
@@ -141,11 +164,13 @@ This is still a **lab** bind (`127.0.0.1`, HTTP). Put TLS and a reverse proxy in
 
 ## HTTP API
 
+`GET /v1/status` — telephony, instance, occupancy  
 `GET /v1/calls` — live sessions  
 `GET /v1/calls/recent` — persisted sessions  
+`GET /v1/setups` — inbound routes  
+`GET /v1/outbound-routes` — outbound trunks  
 `GET /v1/ivrs` — IVR programs  
 `GET /v1/ivrs/functions` — generic + custom functions  
-`GET /v1/status` — telephony + per-setup occupancy  
 
 Full list: `/docs`.
 
@@ -154,9 +179,10 @@ Full list: `/docs`.
 ```
 src/
   asterisk/     AMI, ARI, supervisor
-  calls/        match, registry, inbound, call progress
+  calls/        match, registry, inbound, outbound pick, progress, CSAT helpers
   ivr/          document, engine, function catalog/runner
-  pulse/        REST client per stored API
+  pulse/        REST client, lifecycle (create / add / close)
+  instance/     this process ID / name / description
   http/         UI routes + /v1
   db/           SQLite WAL + migrations
   logging/      hourly files
@@ -166,11 +192,8 @@ public/         admin UI
 
 ## Not in this release
 
-**Call direction** (not implemented). Today a session is always an inbound Stasis admit. We will add `direction` on the call record because:
+**Call direction** (not implemented). Today a session is always an inbound Stasis admit. Planned: `inbound` | `outbound` | `robo`.
 
-- An **agent extension** (owned 3001–3999) may place an **outbound** call. That is not a customer DID hit. Occupancy, live table, and PULSE ids must not look like inbound IVR.
-- IIM itself may originate a **robo** call: dial a number, answer, run an IVR. Originate + playback + DTMF share the IVR engine, but the A-leg is ours, there is no inbound setup match, and hangup/retry policy is campaign-like.
+**Post-call survey run** (config only). Routes can point at a CSAT IVR; IIM does not yet keep the caller after an agent hangup to collect it.
 
-Values: `inbound` | `outbound` | `robo`. Also needed with that: originator (station vs IIM), destination number, which IVR for robo, and caps that are not inbound DID setups.
-
-Queue/bridge to an agent, play-amount/play-string, automated tests/CI, HTTPS termination in-process, multi-user RBAC, HA, or a packaged Windows/Linux service. Those are the next steps toward a commercial build.
+**Queue/bridge to an agent**, play-amount/play-string, bank-specific hardcoded IVRs (Hugo/Sindh/JS are documents + functions, not `if bank` in the engine), automated tests/CI, HTTPS termination in-process, multi-user RBAC, HA, or a packaged Windows/Linux service.

@@ -2,6 +2,7 @@ import type { AriClient } from "../asterisk/ari.js";
 import type { ConfigStore } from "../db/sqlite.js";
 import type { Logger } from "../logging/index.js";
 import type { PulseClient } from "../pulse/client.js";
+import type { PulseLifecycle } from "../pulse/lifecycle.js";
 import type { CallSession, CallSetup } from "../domain/types.js";
 import { CallRegistry } from "./registry.js";
 import type { IvrEngine } from "../ivr/engine.js";
@@ -32,6 +33,7 @@ export class InboundController {
     private readonly ari: AriClient,
     private readonly ivr: IvrEngine,
     private readonly pulse: PulseClient,
+    private readonly lifecycle: PulseLifecycle,
     private readonly log: Logger,
   ) {}
 
@@ -86,13 +88,18 @@ export class InboundController {
     const uniqueId = ev.channel?.id ?? "";
     if (!uniqueId) return;
     this.admitting.delete(uniqueId);
+    void this.finishChannel(uniqueId);
+  }
+
+  private async finishChannel(uniqueId: string): Promise<void> {
+    const session = this.registry.getByUnique(uniqueId);
+    if (session) {
+      await this.lifecycle.closeIfOpen(session, 1);
+    }
     this.ivr.stop(uniqueId, "channel gone");
-    const ended = this.registry.end(uniqueId);
+    const ended = this.registry.end(uniqueId, session?.rejectReason, Boolean(session?.rejectReason));
     if (ended) {
-      this.log.info(
-        { component: "inbound", ...callLogFields(ended) },
-        "call shutdown",
-      );
+      this.log.info({ component: "inbound", ...callLogFields(ended) }, "call shutdown");
     }
   }
 
@@ -163,9 +170,21 @@ export class InboundController {
       .finally(() => this.admitting.delete(facts.uniqueId));
   }
 
-  /** Admit only. Answer is an IVR function when a program is attached. */
+  /** Admit only. Pulse Create Interaction + Create Session run before answer or reject. */
   private async holdInStasis(session: CallSession): Promise<void> {
     if (!this.registry.getByUnique(session.uniqueId)) return;
+    const screen = await this.lifecycle.screenBeforeAnswer(session);
+    if (!screen.ok) {
+      session.rejectReason = screen.reason;
+      this.registry.update(session);
+      this.log.warn(
+        { component: "inbound", reason: screen.reason, ...callLogFields(session) },
+        "PULSE screen failed — reject without answer",
+      );
+      await this.lifecycle.closeIfOpen(session, 0);
+      await this.ari.hangup(session.uniqueId, "rejected");
+      return;
+    }
     session.state = "session";
     this.registry.update(session);
     const setup = session.setupId != null ? this.store.getSetup(session.setupId) : null;

@@ -123,7 +123,7 @@ function renderStep() {
         <td><input data-opt="${i}:${j}:param" value="${esc(o.param)}" placeholder="optional" /></td>
         <td><select data-opt="${i}:${j}:success">${menuSelect(o.success)}</select></td>
         <td><select data-opt="${i}:${j}:fail">${menuSelect(o.fail)}</select></td>
-        <td><button class="btn ghost" type="button" data-del-opt="${i}:${j}">×</button></td>
+        <td><button class="btn btn-outline-secondary" type="button" data-del-opt="${i}:${j}">×</button></td>
       </tr>`,
     )
     .join("");
@@ -131,7 +131,7 @@ function renderStep() {
       <div class="row">
         <strong>Menu ${esc(m.key)}</strong>
         <label class="muted"><input type="radio" name="entry" data-entry="${i}" ${m.isEntry ? "checked" : ""} /> Start of call</label>
-        <button class="btn ghost" type="button" data-del-menu="${i}">Remove menu</button>
+        <button class="btn btn-outline-secondary" type="button" data-del-menu="${i}">Remove menu</button>
       </div>
       <div class="form-grid" style="margin-top:10px">
         <div><label>Menu id</label><input data-m="${i}:key" value="${esc(m.key)}" /></div>
@@ -153,7 +153,7 @@ function renderStep() {
         <thead><tr><th>Caller presses</th><th>IIM does</th><th>Extra</th><th>If that worked</th><th>If that failed</th><th></th></tr></thead>
         <tbody>${opts}</tbody>
       </table>
-      <button class="btn ghost" type="button" data-add-opt="${i}" style="margin-top:8px">Add key</button>
+      <button class="btn btn-outline-secondary" type="button" data-add-opt="${i}" style="margin-top:8px">Add key</button>
     </div>`;
   bindStep(el);
 }
@@ -296,9 +296,11 @@ async function refresh() {
         <td>${esc(entry ? `${entry.key} · ${entry.name}` : x.entryKey || "—")}</td>
         <td>${x.enabled ? '<span class="tag on">ON</span>' : '<span class="tag off">OFF</span>'}</td>
         <td>
-          <button class="btn ghost" type="button" data-edit="${x.id}">Edit</button>
-          <button class="btn ghost" type="button" data-flow="${x.id}">Flow</button>
-          <button class="btn ghost" type="button" data-del="${x.id}">Remove</button>
+          <div class="btn-row">
+          <button class="btn btn-outline-secondary" type="button" data-edit="${x.id}">Edit</button>
+          <button class="btn btn-outline-secondary" type="button" data-flow="${x.id}">Flow</button>
+          <button class="btn btn-outline-secondary" type="button" data-del="${x.id}">Remove</button>
+          </div>
         </td>
       </tr>`;
       })

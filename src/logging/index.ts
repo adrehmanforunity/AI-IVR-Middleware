@@ -4,6 +4,7 @@ import path from "node:path";
 import pino from "pino";
 import type { Env } from "../config/env.js";
 import { HourlyLogStream } from "./hourlyFile.js";
+import { consoleTeeStream } from "./consoleRing.js";
 
 export type LogBindings = {
   component?: string;
@@ -58,7 +59,7 @@ export function getLogTarget(): LogTarget | null {
 }
 
 export function createLogger(env: Pick<Env, "LOG_LEVEL" | "LOG_DIR">) {
-  const streams: pino.StreamEntry[] = [{ stream: process.stdout }];
+  const streams: pino.StreamEntry[] = [{ stream: consoleTeeStream() }];
 
   try {
     const { root, source } = resolveLogRoot(env.LOG_DIR);

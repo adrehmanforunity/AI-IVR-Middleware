@@ -30,6 +30,12 @@ export function newCallProgress(): Pick<
   | "currentMenu"
   | "queuePosition"
   | "expectedWaitSec"
+  | "isCliAlreadyExist"
+  | "ivrRouting"
+  | "isPriority"
+  | "isHighAlert"
+  | "recordingRelativePath"
+  | "postCallSurveyIvrId"
 > {
   return {
     pulseSessionId: null,
@@ -40,6 +46,12 @@ export function newCallProgress(): Pick<
     currentMenu: null,
     queuePosition: null,
     expectedWaitSec: null,
+    isCliAlreadyExist: null,
+    ivrRouting: null,
+    isPriority: null,
+    isHighAlert: null,
+    recordingRelativePath: "",
+    postCallSurveyIvrId: null,
   };
 }
 
@@ -63,6 +75,12 @@ export function callLogFields(session: CallSession): Record<string, unknown> {
     callerId: session.callerId,
     did: session.did,
     trunk: session.trunk,
+    isCliAlreadyExist: session.isCliAlreadyExist,
+    ivrRouting: session.ivrRouting,
+    isPriority: session.isPriority,
+    isHighAlert: session.isHighAlert,
+    recordingRelativePath: session.recordingRelativePath || undefined,
+    postCallSurveyIvrId: session.postCallSurveyIvrId || undefined,
   };
 }
 
@@ -77,7 +95,7 @@ export function applyPulseFacts(session: CallSession, data: Record<string, unkno
   const interaction = pick("interactionId", "callInteractionId", "InteractionId");
   if (typeof interaction === "string" && interaction.trim()) session.interactionId = interaction.trim();
 
-  const pulseSession = pick("pulseSessionId", "callSessionId", "sessionGuid", "pulseSession");
+  const pulseSession = pick("pulseSessionId", "sessionId", "callSessionId", "sessionGuid", "pulseSession");
   if (typeof pulseSession === "string" && pulseSession.trim()) session.pulseSessionId = pulseSession.trim();
 
   const agentId = pick("agentId", "callAgentId", "AgentId");
@@ -110,5 +128,29 @@ export function applyPulseFacts(session: CallSession, data: Record<string, unkno
   const callerType = pick("callerType", "CallerType");
   if (typeof callerType === "string") session.callerType = callerType;
 
+  const cliExist = asBool(pick("isCliAlreadyExist", "IsCliAlreadyExist"));
+  if (cliExist !== null) session.isCliAlreadyExist = cliExist;
+
+  const routing = pick("ivrRouting", "IvrRouting");
+  if (routing !== undefined) {
+    const n = Number(routing);
+    if (Number.isFinite(n)) session.ivrRouting = n;
+  }
+
+  const priority = asBool(pick("isPriority", "IsPriority"));
+  if (priority !== null) session.isPriority = priority;
+
+  const highAlert = asBool(pick("isHighAlert", "IsHighAlert"));
+  if (highAlert !== null) session.isHighAlert = highAlert;
+
+  const recPath = data.recordingRelativePath ?? data.RecordingRelativePath;
+  if (typeof recPath === "string") session.recordingRelativePath = recPath;
+
   if (data.customer !== undefined) session.customer = data.customer;
+}
+
+function asBool(raw: unknown): boolean | null {
+  if (raw === true || raw === 1 || raw === "1" || raw === "true") return true;
+  if (raw === false || raw === 0 || raw === "0" || raw === "false") return false;
+  return null;
 }

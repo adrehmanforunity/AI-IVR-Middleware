@@ -4,6 +4,7 @@ import type { Logger } from "../logging/index.js";
 import type { CallSession, Ivr, IvrMenu, IvrOption } from "../domain/types.js";
 import type { CallRegistry } from "../calls/registry.js";
 import type { PulseClient } from "../pulse/client.js";
+import type { PulseLifecycle } from "../pulse/lifecycle.js";
 import {
   findOption,
   interruptAllows,
@@ -15,13 +16,18 @@ import {
 import { resolveMenu, type MenuRuntime } from "./menuDefaults.js";
 import { IvrFunctionRunner } from "./functions.js";
 import { callLogFields } from "../calls/progress.js";
-import { DEFAULT_VOICE_FILES_PATH, resolveVoiceMedia, VOICE_PATH_SETTING } from "./voice.js";
+import {
+  DEFAULT_VOICE_FILES_PATH,
+  isPlayablePrompt,
+  resolveVoiceMedia,
+  VOICE_PATH_SETTING,
+} from "./voice.js";
 
 type AriEvent = {
   type?: string;
   digit?: string;
   channel?: { id?: string };
-  playback?: { id?: string; target_uri?: string };
+  playback?: { id?: string; target_uri?: string; media_uri?: string; state?: string };
 };
 
 type Run = {
@@ -32,6 +38,8 @@ type Run = {
   noInputTries: number;
   invalidTries: number;
   playbackId: string | null;
+  lastMedia: string | null;
+  playingFallbackBeep: boolean;
   playQueue: string[];
   waitingPlayThen: string | null;
   afterInvalid: boolean;
@@ -50,9 +58,10 @@ export class IvrEngine {
     private readonly registry: CallRegistry,
     private readonly ari: AriClient,
     pulse: PulseClient,
+    private readonly lifecycle: PulseLifecycle,
     private readonly log: Logger,
   ) {
-    this.fns = new IvrFunctionRunner(store, pulse, ari, log);
+    this.fns = new IvrFunctionRunner(store, pulse, lifecycle, ari, log);
   }
 
   start(session: CallSession, ivrId: number): void {
@@ -73,6 +82,8 @@ export class IvrEngine {
       noInputTries: 0,
       invalidTries: 0,
       playbackId: null,
+      lastMedia: null,
+      playingFallbackBeep: false,
       playQueue: [],
       waitingPlayThen: null,
       afterInvalid: false,
@@ -121,29 +132,28 @@ export class IvrEngine {
         if (!pb) return;
         for (const run of this.runs.values()) {
           if (run.playbackId === pb) {
-            run.playbackId = null;
-            if (run.waitingPlayThen) {
-              const next = run.waitingPlayThen;
-              run.waitingPlayThen = null;
-              run.busy = false;
-              this.safe(run, this.follow(run, next));
+            const media = ev.playback?.media_uri || run.lastMedia;
+            const failed = String(ev.playback?.state || "").toLowerCase() === "failed";
+            if (run.playingFallbackBeep) {
+              run.playingFallbackBeep = false;
+              this.continueAfterPlayback(run);
               break;
             }
-            if (run.afterInvalid) {
-              run.afterInvalid = false;
-              this.safe(run, this.enterMenu(run));
+            if (failed) {
+              this.log.error(
+                {
+                  component: "ivr",
+                  media,
+                  menu: run.menuKey,
+                  language: run.session.language,
+                  ...callLogFields(run.session),
+                },
+                "voice file missing or unplayable on Asterisk — playing beep then continuing",
+              );
+              this.safe(run, this.playMissingBeep(run));
               break;
             }
-            if (run.afterNoInput) {
-              run.afterNoInput = false;
-              this.safe(run, this.enterMenu(run));
-              break;
-            }
-            if (run.playQueue.length) {
-              this.safe(run, this.playNextFile(run));
-              break;
-            }
-            this.afterPrompt(run);
+            this.continueAfterPlayback(run);
             break;
           }
         }
@@ -214,16 +224,85 @@ export class IvrEngine {
     this.armTimeout(run, rt.inputTimeout);
   }
 
+  private continueAfterPlayback(run: Run): void {
+    run.playbackId = null;
+    run.lastMedia = null;
+    run.playingFallbackBeep = false;
+    if (run.waitingPlayThen) {
+      const next = run.waitingPlayThen;
+      run.waitingPlayThen = null;
+      run.busy = false;
+      this.safe(run, this.follow(run, next));
+      return;
+    }
+    if (run.afterInvalid) {
+      run.afterInvalid = false;
+      this.safe(run, this.enterMenu(run));
+      return;
+    }
+    if (run.afterNoInput) {
+      run.afterNoInput = false;
+      this.safe(run, this.enterMenu(run));
+      return;
+    }
+    if (run.playQueue.length) {
+      this.safe(run, this.playNextFile(run));
+      return;
+    }
+    this.afterPrompt(run);
+  }
+
+  /** Asterisk built-in `sound:beep` — not a file under custom/<language>. */
+  private async playMissingBeep(run: Run): Promise<void> {
+    if (!this.runs.has(run.session.uniqueId)) return;
+    run.playingFallbackBeep = true;
+    run.lastMedia = "sound:beep";
+    run.playbackId = await this.ari.play(run.session.uniqueId, "sound:beep");
+    if (!run.playbackId) {
+      run.playingFallbackBeep = false;
+      run.lastMedia = null;
+      this.continueAfterPlayback(run);
+    }
+  }
+
   private async play(run: Run, sound: string): Promise<void> {
     if (run.playbackId) {
       await this.ari.stopPlayback(run.playbackId);
       run.playbackId = null;
     }
-    if (!sound.trim()) return;
+    if (!isPlayablePrompt(sound)) {
+      if (String(sound ?? "").trim()) {
+        this.log.error(
+          {
+            component: "ivr",
+            file: sound,
+            menu: run.menuKey,
+            ...callLogFields(run.session),
+          },
+          "IVR prompt skipped (invalid file name) — playing beep then continuing",
+        );
+        await this.playMissingBeep(run);
+      }
+      return;
+    }
     const root = this.store.getSettings()[VOICE_PATH_SETTING] || DEFAULT_VOICE_FILES_PATH;
     const media = resolveVoiceMedia(sound, run.session.language, root);
     if (!media) return;
+    run.lastMedia = media;
     run.playbackId = await this.ari.play(run.session.uniqueId, media);
+    if (!run.playbackId) {
+      this.log.error(
+        {
+          component: "ivr",
+          media,
+          menu: run.menuKey,
+          language: run.session.language,
+          ...callLogFields(run.session),
+        },
+        "voice file play rejected by ARI — playing beep then continuing",
+      );
+      await this.playMissingBeep(run);
+    }
   }
 
   private armTimeout(run: Run, seconds: number): void {
@@ -419,6 +498,7 @@ export class IvrEngine {
 
   private async hangup(run: Run): Promise<void> {
     this.log.info({ component: "ivr", menu: run.menuKey, ...callLogFields(run.session) }, "IVR hangup");
+    await this.lifecycle.closeIfOpen(run.session, 1);
     await this.ari.hangup(run.session.uniqueId, "normal");
     this.stop(run.session.uniqueId, "hangup");
   }

@@ -27,10 +27,30 @@ function statusTag(state) {
   return `<span class="tag">${esc(state)}</span>`;
 }
 
+let ivrById = {};
+
+function fillIvrSelect(sel, ivrs, emptyLabel) {
+  sel.innerHTML =
+    `<option value="">${emptyLabel}</option>` + ivrs.map((i) => `<option value="${i.id}">${esc(i.name)}</option>`).join("");
+}
+
+function ivrName(id) {
+  if (!id) return "—";
+  return ivrById[id]?.name || `#${id}`;
+}
+
+function surveyLabel(row) {
+  if (!row.postCallSurveyEnabled) return "off";
+  return ivrName(row.postCallSurveyIvrId);
+}
+
 async function boot() {
   const me = await (await api("/auth/me")).json();
   document.getElementById("who").textContent = me.username;
   document.getElementById("avatar").textContent = (me.username || "S").slice(0, 1).toUpperCase();
+  const ivrs = await (await api("/v1/ivrs")).json();
+  ivrById = Object.fromEntries((ivrs || []).map((i) => [i.id, i]));
+  fillIvrSelect(document.getElementById("postCallSurveyIvrId"), ivrs, "None");
   await refresh();
 }
 
@@ -42,7 +62,7 @@ async function refresh() {
     el.textContent = "None yet. Add a route below, or pick a trunk from the Asterisk list.";
   } else {
     el.innerHTML = `<table class="table">
-      <thead><tr><th>Name</th><th>Description</th><th>Trunk</th><th>Trunk status</th><th>For</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Description</th><th>Trunk</th><th>Trunk status</th><th>For</th><th>Survey</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows
         .map(
           (x) => `<tr>
@@ -51,13 +71,16 @@ async function refresh() {
           <td>${esc(x.trunk)}</td>
           <td>${statusTag(x.trunkStatus)}</td>
           <td>${esc(audienceLabel(x.audience))}</td>
+          <td>${esc(surveyLabel(x))}</td>
           <td>${x.enabled ? '<span class="tag on">ON</span>' : '<span class="tag off">OFF</span>'}</td>
           <td>
-            <button class="btn ghost" type="button" data-toggle="${x.id}" data-on="${x.enabled ? "1" : "0"}">${
+            <div class="btn-row">
+            <button class="btn btn-outline-secondary" type="button" data-toggle="${x.id}" data-on="${x.enabled ? "1" : "0"}">${
             x.enabled ? "Disable" : "Enable"
           }</button>
-            <button class="btn ghost" type="button" data-edit="${x.id}">Edit</button>
-            <button class="btn ghost" type="button" data-del="${x.id}">Remove</button>
+            <button class="btn btn-outline-secondary" type="button" data-edit="${x.id}">Edit</button>
+            <button class="btn btn-outline-secondary" type="button" data-del="${x.id}">Remove</button>
+            </div>
           </td>
         </tr>`,
         )
@@ -77,7 +100,7 @@ async function refresh() {
 
   const ast = document.getElementById("asterisk");
   if (!data.asteriskOk) {
-    ast.textContent = "Could not read trunks from Asterisk. Check ARI on Telephony Setup.";
+    ast.textContent = "Could not read trunks from Asterisk. Check ARI on IIM Setup.";
     return;
   }
   const trunks = data.asteriskTrunks || [];
@@ -93,7 +116,7 @@ async function refresh() {
         <td><strong>${esc(t.name)}</strong></td>
         <td>${statusTag(t.state)}</td>
         <td>${t.channels}</td>
-        <td><button class="btn ghost" type="button" data-use="${esc(t.name)}">Use this trunk</button></td>
+        <td><button class="btn btn-outline-secondary" type="button" data-use="${esc(t.name)}">Use this trunk</button></td>
       </tr>`,
       )
       .join("")}</tbody></table>`;
@@ -113,6 +136,8 @@ function load(x) {
   document.getElementById("description").value = x.description || "";
   document.getElementById("trunk").value = x.trunk || "";
   document.getElementById("audience").value = x.audience || "both";
+  document.getElementById("postCallSurveyEnabled").checked = !!x.postCallSurveyEnabled;
+  document.getElementById("postCallSurveyIvrId").value = x.postCallSurveyIvrId || "";
   document.getElementById("enabled").checked = !!x.enabled;
   document.getElementById("msg").textContent = "";
 }
@@ -122,6 +147,8 @@ function resetForm() {
   document.getElementById("routeId").value = "";
   document.getElementById("form").reset();
   document.getElementById("audience").value = "both";
+  document.getElementById("postCallSurveyEnabled").checked = false;
+  document.getElementById("postCallSurveyIvrId").value = "";
   document.getElementById("enabled").checked = true;
   document.getElementById("msg").textContent = "";
 }
@@ -132,6 +159,10 @@ function bodyFromForm() {
     description: document.getElementById("description").value.trim(),
     trunk: document.getElementById("trunk").value.trim(),
     audience: document.getElementById("audience").value,
+    postCallSurveyEnabled: document.getElementById("postCallSurveyEnabled").checked,
+    postCallSurveyIvrId: document.getElementById("postCallSurveyIvrId").value
+      ? Number(document.getElementById("postCallSurveyIvrId").value)
+      : null,
     enabled: document.getElementById("enabled").checked,
   };
 }
@@ -142,6 +173,10 @@ document.getElementById("form").addEventListener("submit", async (e) => {
   const body = bodyFromForm();
   if (!body.name || !body.trunk) {
     msg.textContent = "Name and trunk are required";
+    return;
+  }
+  if (body.postCallSurveyEnabled && !body.postCallSurveyIvrId) {
+    msg.textContent = "Pick a survey IVR, or turn off post-call survey";
     return;
   }
   const id = document.getElementById("routeId").value;

@@ -14,6 +14,8 @@ const bodySchema = {
     trunk: { type: "string" },
     audience: { type: "string", enum: ["robo", "agents", "both"] },
     enabled: { type: "boolean" },
+    postCallSurveyEnabled: { type: "boolean" },
+    postCallSurveyIvrId: { type: "number", nullable: true },
   },
 };
 

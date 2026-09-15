@@ -1,6 +1,7 @@
 import type { ConfigStore } from "../db/sqlite.js";
 import type { Logger } from "../logging/index.js";
 import type { PulseApiConfig, PulseApiSlot } from "../domain/types.js";
+import { pulseAuthHeaders } from "./auth.js";
 
 export type PulseCallResult<T> = {
   ok: boolean;
@@ -20,12 +21,13 @@ export class PulseClient {
   async invoke<T = Record<string, unknown>>(
     slot: PulseApiSlot,
     body: unknown,
+    opts?: { minAttempts?: number; ignoreDisabled?: boolean },
   ): Promise<PulseCallResult<T>> {
     const cfg = this.store.getPulseApi(slot);
     if (!cfg) {
       return fail("pulse api not found");
     }
-    if (!cfg.enabled) {
+    if (!cfg.enabled && !opts?.ignoreDisabled) {
       return fail("pulse api disabled");
     }
     if (cfg.mockEnabled) {
@@ -39,11 +41,15 @@ export class PulseClient {
       return fail("pulse api endpoint not configured");
     }
 
-    const attempts = 1 + Math.max(0, cfg.retries);
+    const attempts = Math.max(1 + Math.max(0, cfg.retries), opts?.minAttempts ?? 1);
     let last: PulseCallResult<T> = fail("not attempted");
     for (let i = 0; i < attempts; i += 1) {
       last = await this.once<T>(cfg, body);
       if (last.ok) return last;
+      this.log.warn(
+        { component: "pulse", slot: cfg.slot, attempt: i + 1, attempts, err: last.error },
+        "pulse attempt failed",
+      );
     }
     return last;
   }
@@ -64,7 +70,7 @@ export class PulseClient {
     let data: T | null = null;
     if (cfg.mockJson.trim()) {
       try {
-        data = JSON.parse(cfg.mockJson) as T;
+        data = unwrapPulseBody(JSON.parse(cfg.mockJson)) as T;
       } catch {
         return fail("mock JSON is invalid", true);
       }
@@ -83,9 +89,14 @@ export class PulseClient {
 
   private async once<T>(cfg: PulseApiConfig, body: unknown): Promise<PulseCallResult<T>> {
     try {
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        accept: "application/json",
+        ...pulseAuthHeaders(this.store.getPulseApiKey()),
+      };
       const init: RequestInit = {
         method: cfg.method,
-        headers: { "content-type": "application/json", accept: "application/json" },
+        headers,
         signal: AbortSignal.timeout(cfg.timeoutMs),
       };
       if (cfg.method !== "GET") {
@@ -97,7 +108,7 @@ export class PulseClient {
       let data: T | null = null;
       if (text) {
         try {
-          data = JSON.parse(text) as T;
+          data = unwrapPulseBody(JSON.parse(text)) as T;
         } catch {
           data = { raw: text } as T;
         }
@@ -116,10 +127,20 @@ export class PulseClient {
     } catch (err) {
       const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
       const message = err instanceof Error ? err.message : String(err);
-      this.log.warn({ component: "pulse", slot: cfg.slot, err: message, timedOut }, "pulse call failed");
+      this.log.warn(
+        { component: "pulse", slot: cfg.slot, err: message, timedOut, auth: Boolean(this.store.getPulseApiKey()) },
+        "pulse call failed",
+      );
       return { ok: false, status: null, data: null, error: message, timedOut, mocked: false };
     }
   }
+}
+
+function unwrapPulseBody(data: unknown): unknown {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const rec = data as Record<string, unknown>;
+  if (rec.responseBody != null && typeof rec.responseBody === "object") return rec.responseBody;
+  return data;
 }
 
 function fail(error: string, mocked = false): PulseCallResult<never> {

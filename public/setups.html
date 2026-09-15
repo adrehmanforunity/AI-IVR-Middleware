@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Inbound routing — IIM</title>
     <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
-    <link rel="stylesheet" href="/css/iim.css?v=12" />
+    <link rel="stylesheet" href="/css/iim.css?v=15" />
   </head>
   <body data-nav="/setups">
     <div class="page">
@@ -22,6 +22,8 @@
               <p>
                 When a call comes in, match the number they dialed (DID) and optionally the trunk, then start that IVR.
                 Leave trunk empty to match any trunk — needed for lab calls from a phone (2098 → 7777).
+                Post-call survey (CSAT) is optional: a separate IVR after the agent hangs up, on the same Pulse
+                interaction and session. It does not run if the caller hangs up first.
               </p>
             </div>
           </div>
@@ -32,18 +34,18 @@
           </section>
 
           <section class="panel editor-panel" id="live-panel" hidden>
-            <div class="row" style="justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px">
-              <h3 id="live-title" style="margin: 0">Live calls</h3>
-              <div class="row" style="flex-wrap: wrap; align-items: center">
-                <label class="check" for="live-auto" style="margin: 0">
+            <div class="panel-head">
+              <h3 id="live-title">Live calls</h3>
+              <div class="btn-row" style="margin: 0">
+                <label class="check" for="live-auto">
                   <input id="live-auto" type="checkbox" />
                   Auto update
                 </label>
-                <label for="live-interval" class="muted" style="margin: 0">Every</label>
+                <label for="live-interval" class="muted">Every</label>
                 <input id="live-interval" type="number" min="3" step="1" value="3" style="width: 4.5rem" />
                 <span class="muted">seconds (min 3)</span>
-                <button class="btn ghost" type="button" id="live-refresh">Refresh</button>
-                <button class="btn ghost" type="button" id="live-close">Close</button>
+                <button class="btn btn-outline-secondary" type="button" id="live-refresh">Refresh</button>
+                <button class="btn btn-outline-secondary" type="button" id="live-close">Close</button>
               </div>
             </div>
             <p class="muted" id="live-hint">
@@ -85,22 +87,36 @@
                   <div class="hint">Build the IVR under IVRs, then pick it here so this DID starts that program.</div>
                 </div>
                 <div class="check">
+                  <input id="postCallSurveyEnabled" type="checkbox" />
+                  <label for="postCallSurveyEnabled">Post-call survey (CSAT)</label>
+                </div>
+                <div>
+                  <label for="postCallSurveyIvrId">Survey IVR</label>
+                  <select id="postCallSurveyIvrId">
+                    <option value="">None</option>
+                  </select>
+                  <div class="hint">
+                    Own IVR document — one menu or many levels. Reuses the live Pulse session; no new Create Interaction
+                    / Create Session. Only if the agent ends the call.
+                  </div>
+                </div>
+                <div class="check">
                   <input id="enabled" type="checkbox" checked />
                   <label for="enabled">Accept new calls</label>
                 </div>
               </div>
-              <div class="row" style="margin-top: 16px">
-                <button class="btn" type="submit">Save</button>
-                <button class="btn ghost" type="button" id="reset">New route</button>
+              <div class="btn-row" style="margin-top: 16px">
+                <button class="btn btn-primary" type="submit">Save</button>
+                <button class="btn btn-outline-secondary" type="button" id="reset">New route</button>
                 <span class="muted" id="msg"></span>
               </div>
             </form>
           </section>
 
           <section class="panel">
-            <div class="row" style="justify-content: space-between; align-items: center">
-              <h3 style="margin: 0">Trunks on Asterisk</h3>
-              <button class="btn ghost" type="button" id="refresh-trunks">Refresh</button>
+            <div class="panel-head">
+              <h3>Trunks on Asterisk</h3>
+              <button class="btn btn-outline-secondary" type="button" id="refresh-trunks">Refresh</button>
             </div>
             <p class="muted">
               Names that are not phone extensions (extensions are numbers like 2098 or 3001). Use a trunk to restrict
@@ -113,9 +129,9 @@
       </div>
     </div>
     <script src="/vendor/tabler/tabler.min.js"></script>
-    <script src="/js/icons.js?v=1"></script>
-    <script src="/js/layout.js?v=2"></script>
-    <script src="/js/user-menu.js?v=4"></script>
-    <script src="/js/setups.js?v=5"></script>
+    <script src="/js/icons.js?v=3"></script>
+    <script src="/js/layout.js?v=6"></script>
+    <script src="/js/user-menu.js?v=6"></script>
+    <script src="/js/setups.js?v=9"></script>
   </body>
 </html>

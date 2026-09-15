@@ -39,7 +39,7 @@ async function refreshTrunks() {
   const ast = document.getElementById("asterisk");
   const data = await (await api("/v1/asterisk/trunks")).json();
   if (!data.ok) {
-    ast.textContent = "Could not read trunks from Asterisk. Check ARI on Telephony Setup. You can still leave Any trunk.";
+    ast.textContent = "Could not read trunks from Asterisk. Check ARI on IIM Setup. You can still leave Any trunk.";
     fillTrunkSelect([], document.getElementById("matchTrunk").value);
     return;
   }
@@ -57,7 +57,7 @@ async function refreshTrunks() {
         <td><strong>${esc(t.name)}</strong></td>
         <td>${statusTag(t.state)}</td>
         <td>${t.channels}</td>
-        <td><button class="btn ghost" type="button" data-use="${esc(t.name)}">Use this trunk</button></td>
+        <td><button class="btn btn-outline-secondary" type="button" data-use="${esc(t.name)}">Use this trunk</button></td>
       </tr>`,
       )
       .join("")}</tbody></table>`;
@@ -69,15 +69,31 @@ async function refreshTrunks() {
   });
 }
 
+let ivrById = {};
+
+function fillIvrSelect(sel, ivrs, emptyLabel) {
+  sel.innerHTML =
+    `<option value="">${emptyLabel}</option>` + ivrs.map((i) => `<option value="${i.id}">${esc(i.name)}</option>`).join("");
+}
+
+function ivrName(id) {
+  if (!id) return "—";
+  return ivrById[id]?.name || `#${id}`;
+}
+
+function surveyLabel(row) {
+  if (!row.postCallSurveyEnabled) return "off";
+  return ivrName(row.postCallSurveyIvrId);
+}
+
 async function boot() {
   const me = await (await api("/auth/me")).json();
   document.getElementById("who").textContent = me.username;
   document.getElementById("avatar").textContent = (me.username || "S").slice(0, 1).toUpperCase();
   const ivrs = await (await api("/v1/ivrs")).json();
-  const sel = document.getElementById("ivrId");
-  sel.innerHTML =
-    `<option value="">None (answer and wait)</option>` +
-    ivrs.map((i) => `<option value="${i.id}">${esc(i.name)}</option>`).join("");
+  ivrById = Object.fromEntries((ivrs || []).map((i) => [i.id, i]));
+  fillIvrSelect(document.getElementById("ivrId"), ivrs, "None (answer and wait)");
+  fillIvrSelect(document.getElementById("postCallSurveyIvrId"), ivrs, "None");
   await Promise.all([refresh(), refreshTrunks()]);
 }
 
@@ -89,23 +105,26 @@ async function refresh() {
     return;
   }
   el.innerHTML = `<table class="table">
-    <thead><tr><th>Name</th><th>DID</th><th>Trunk</th><th>IVR</th><th>Live / cap</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>DID</th><th>Trunk</th><th>IVR</th><th>Survey</th><th>Live / cap</th><th>Status</th><th></th></tr></thead>
     <tbody>${rows
       .map(
         (x) => `<tr>
         <td><strong>${esc(x.name)}</strong></td>
         <td>${esc(x.matchDid || "any")}</td>
         <td>${esc(x.matchTrunk || "any")}</td>
-        <td>${esc(x.ivrId ? `#${x.ivrId}` : "—")}</td>
-        <td><button class="btn ghost" type="button" data-live="${x.id}">${x.activeCount}/${x.maxConcurrent}</button></td>
+        <td>${esc(ivrName(x.ivrId))}</td>
+        <td>${esc(surveyLabel(x))}</td>
+        <td><button class="btn btn-outline-secondary" type="button" data-live="${x.id}">${x.activeCount}/${x.maxConcurrent}</button></td>
         <td>${x.enabled ? '<span class="tag on">ON</span>' : '<span class="tag off">DRAIN</span>'}</td>
         <td>
-          <button class="btn ghost" type="button" data-live="${x.id}">Live calls</button>
-          <button class="btn ghost" type="button" data-toggle="${x.id}" data-on="${x.enabled ? "1" : "0"}">${
+          <div class="btn-row">
+          <button class="btn btn-outline-secondary" type="button" data-live="${x.id}">Live calls</button>
+          <button class="btn btn-outline-secondary" type="button" data-toggle="${x.id}" data-on="${x.enabled ? "1" : "0"}">${
           x.enabled ? "Disable" : "Enable"
         }</button>
-          <button class="btn ghost" type="button" data-edit="${x.id}">Edit</button>
-          <button class="btn ghost" type="button" data-del="${x.id}">Remove</button>
+          <button class="btn btn-outline-secondary" type="button" data-edit="${x.id}">Edit</button>
+          <button class="btn btn-outline-secondary" type="button" data-del="${x.id}">Remove</button>
+          </div>
         </td>
       </tr>`,
       )
@@ -144,7 +163,15 @@ function sessionLabel(c) {
   const pulse = (c.pulseSessionId || "").trim();
   const internal = c.internalId || "";
   if (interaction || pulse) {
-    return `${esc(interaction || "—")}<div class="muted">${esc(pulse || "no PULSE session")}</div>`;
+    const flags = [];
+    if (c.ivrRouting != null) flags.push(`route ${c.ivrRouting}`);
+    if (c.isCliAlreadyExist === true) flags.push("CLI known");
+    if (c.isPriority === true) flags.push("priority");
+    if (c.isHighAlert === true) flags.push("high alert");
+    const extra = flags.length ? `<div class="muted">${esc(flags.join(" · "))}</div>` : "";
+    const rec = (c.recordingRelativePath || "").trim();
+    const recLine = rec ? `<div class="muted">${esc(rec)}</div>` : "";
+    return `${esc(interaction || "—")}<div class="muted">${esc(pulse || "no PULSE session")}</div>${extra}${recLine}`;
   }
   return `—<div class="muted">${esc(internal.slice(0, 8) || "no session yet")}</div>`;
 }
@@ -231,6 +258,8 @@ function load(x) {
   );
   document.getElementById("maxConcurrent").value = x.maxConcurrent;
   document.getElementById("ivrId").value = x.ivrId || "";
+  document.getElementById("postCallSurveyEnabled").checked = !!x.postCallSurveyEnabled;
+  document.getElementById("postCallSurveyIvrId").value = x.postCallSurveyIvrId || "";
   document.getElementById("enabled").checked = !!x.enabled;
   document.getElementById("msg").textContent = "";
 }
@@ -241,6 +270,8 @@ function resetForm() {
   document.getElementById("form").reset();
   document.getElementById("matchTrunk").value = "";
   document.getElementById("maxConcurrent").value = 10;
+  document.getElementById("postCallSurveyEnabled").checked = false;
+  document.getElementById("postCallSurveyIvrId").value = "";
   document.getElementById("enabled").checked = true;
   document.getElementById("msg").textContent = "";
 }
@@ -252,6 +283,10 @@ function bodyFromForm() {
     matchTrunk: document.getElementById("matchTrunk").value.trim(),
     maxConcurrent: Number(document.getElementById("maxConcurrent").value) || 10,
     ivrId: document.getElementById("ivrId").value ? Number(document.getElementById("ivrId").value) : null,
+    postCallSurveyEnabled: document.getElementById("postCallSurveyEnabled").checked,
+    postCallSurveyIvrId: document.getElementById("postCallSurveyIvrId").value
+      ? Number(document.getElementById("postCallSurveyIvrId").value)
+      : null,
     enabled: document.getElementById("enabled").checked,
   };
 }
@@ -262,6 +297,10 @@ document.getElementById("form").addEventListener("submit", async (e) => {
   const body = bodyFromForm();
   if (!body.matchDid && !body.matchTrunk) {
     msg.textContent = "Enter a DID and/or a trunk";
+    return;
+  }
+  if (body.postCallSurveyEnabled && !body.postCallSurveyIvrId) {
+    msg.textContent = "Pick a survey IVR, or turn off post-call survey";
     return;
   }
   const id = document.getElementById("setupId").value;

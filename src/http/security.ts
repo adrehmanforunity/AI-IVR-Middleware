@@ -102,7 +102,8 @@ export function isUiHtmlPath(path: string): boolean {
     path === "/telephony" ||
     path === "/stations" ||
     path === "/alerts" ||
-    path === "/logs"
+    path === "/logs" ||
+    path === "/console"
   );
 }
 

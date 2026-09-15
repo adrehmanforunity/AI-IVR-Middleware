@@ -20,6 +20,14 @@ const snapshotSchema = {
   properties: {
     uptimeSeconds: { type: "number" },
     stasisApp: { type: "string" },
+    instance: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        name: { type: "string" },
+        description: { type: "string" },
+      },
+    },
     activeCalls: { type: "number" },
     telephony: { type: "object", additionalProperties: true },
     ami: linkSchema,

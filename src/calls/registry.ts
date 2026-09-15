@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ConfigStore } from "../db/sqlite.js";
 import type { CallSession, CallSetup, RejectReason } from "../domain/types.js";
 import { newCallProgress } from "./progress.js";
+import { effectiveSurveyIvrId } from "./survey.js";
 
 export type SetupLive = CallSetup & {
   activeCount: number;
@@ -74,9 +75,11 @@ export class CallRegistry {
       callerType: null,
       customer: null,
       rejectReason: null,
+      pulseClosed: false,
       startedAt: now,
       endedAt: null,
       ...newCallProgress(),
+      postCallSurveyIvrId: effectiveSurveyIvrId(input.setup.postCallSurveyEnabled, input.setup.postCallSurveyIvrId),
     };
     this.byUnique.set(session.uniqueId, session);
     this.byInternal.set(session.internalId, session);
@@ -112,6 +115,7 @@ export class CallRegistry {
       callerType: null,
       customer: null,
       rejectReason: input.reason,
+      pulseClosed: false,
       startedAt: now,
       endedAt: now,
       ...newCallProgress(),

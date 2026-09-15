@@ -7,10 +7,32 @@ async function api(path, opts = {}) {
   return res;
 }
 
-function pill(state) {
-  if (state === "connected") return `<span class="ok">${esc(state)}</span>`;
-  if (state === "degraded" || state === "connecting") return `<span class="warn">${esc(state)}</span>`;
-  return `<span class="bad">${esc(state)}</span>`;
+function ico(name) {
+  return typeof window.iimIcon === "function" ? window.iimIcon(name) : "";
+}
+
+function linkTone(state) {
+  const s = String(state || "unknown").toLowerCase();
+  if (s === "connected") return { tone: "ok", icon: "circle-check" };
+  if (s === "connecting" || s === "degraded") return { tone: "warn", icon: "alert-triangle" };
+  if (s === "disconnected" || s === "error" || s === "failed" || s === "stopped") return { tone: "bad", icon: "circle-x" };
+  return { tone: "off", icon: "plug" };
+}
+
+function switchTone(on) {
+  return on
+    ? { tone: "ok", icon: "circle-check", value: "enabled" }
+    : { tone: "off", icon: "circle-x", value: "disabled" };
+}
+
+function statTile(title, value, tone, icon) {
+  return `<div class="stat-tile tone-${tone}">
+    <div class="stat-ico-wrap">${ico(icon)}</div>
+    <div>
+      <div class="stat-k">${esc(title)}</div>
+      <div class="stat-v">${esc(value)}</div>
+    </div>
+  </div>`;
 }
 
 function esc(s) {
@@ -94,20 +116,24 @@ function renderStatus(s) {
   const tel = s.telephony || {};
   const amiOn = tel.ami?.desired === "connect";
   const ariOn = tel.ari?.desired === "connect";
+  const amiSw = switchTone(amiOn);
+  const ariSw = switchTone(ariOn);
+  const ami = linkTone(s.ami?.state);
+  const ari = linkTone(s.ari?.state);
+  const rest = linkTone(s.ari?.restState);
+  const ws = linkTone(s.ari?.wsState);
+  const from = s.telephony?.ownedExtensions?.from ?? 3001;
+  const to = s.telephony?.ownedExtensions?.to ?? 3999;
   document.getElementById("cards").innerHTML = [
-    ["AMI switch", amiOn ? "enabled" : "disabled"],
-    ["AMI", s.ami?.state ?? "—"],
-    ["ARI switch", ariOn ? "enabled" : "disabled"],
-    ["ARI", s.ari?.state ?? "—"],
-    ["ARI REST", s.ari?.restState ?? "—"],
-    ["ARI WS", s.ari?.wsState ?? "—"],
-    ["IIM stations", `${s.telephony?.ownedExtensions?.from ?? 3001}–${s.telephony?.ownedExtensions?.to ?? 3999}`],
-  ]
-    .map(([k, v]) => {
-      const valued = k === "AMI switch" || k === "ARI switch" || k === "IIM stations" ? v : pill(v);
-      return `<div class="card"><div class="k">${k}</div><div class="v">${valued}</div></div>`;
-    })
-    .join("");
+    statTile("AMI switch", amiSw.value, amiSw.tone, amiSw.icon),
+    statTile("AMI", s.ami?.state ?? "—", ami.tone, ami.icon),
+    statTile("ARI switch", ariSw.value, ariSw.tone, ariSw.icon),
+    statTile("ARI", s.ari?.state ?? "—", ari.tone, ari.icon),
+    statTile("ARI REST", s.ari?.restState ?? "—", rest.tone, rest.icon),
+    statTile("ARI WS", s.ari?.wsState ?? "—", ws.tone, ws.icon),
+    statTile("IIM stations", `${from}–${to}`, "info", "headphones"),
+    statTile("Instance", s.instance?.name || "IIM", "info", "server"),
+  ].join("");
 
   document.getElementById("ami-hint").textContent =
     `${amiOn ? "Enabled — auto-reconnect" : "Disabled"} · sockets ${tel.ami?.running ? "running" : "stopped"} · timeout ${tel.ami?.connectTimeoutMs ?? "—"} ms · retry ${tel.ami?.retryDelayMs ?? "—"} ms.` +
@@ -150,6 +176,9 @@ function fillFrom(cfg, tel, settings) {
   document.getElementById("menu_inputs_acceptable").value = settings?.menu_inputs_acceptable || "*#1234567890";
   document.getElementById("voice_files_path").value =
     settings?.voice_files_path || "/var/lib/asterisk/sounds/custom";
+  document.getElementById("iim_instance_id").value = settings?.iim_instance_id || "";
+  document.getElementById("iim_instance_name").value = settings?.iim_instance_name || "IIM";
+  document.getElementById("iim_instance_description").value = settings?.iim_instance_description || "";
   const ownedHint = document.getElementById("owned-hint");
   if (ownedHint) {
     ownedHint.textContent = `Stations ${document.getElementById("ownedFrom").value}–${document.getElementById("ownedTo").value} belong to IIM. Inbound numbers are set on Inbound routing, not this range.`;
@@ -227,7 +256,7 @@ function asteriskBody() {
 document.getElementById("tel-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const msg = document.getElementById("save-msg");
-  if (!confirm("Save AMI/ARI settings, IIM extension range, voice folder, IVR menu defaults, and PULSE Swagger URL?")) return;
+  if (!confirm("Save this IIM instance identity, AMI/ARI settings, IIM extension range, voice folder, IVR menu defaults, and PULSE Swagger URL?")) return;
   const cfgRes = await api("/v1/config/asterisk", {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -246,6 +275,7 @@ document.getElementById("tel-form").addEventListener("submit", async (e) => {
       value: document.getElementById("pulse-swagger-url").value.trim(),
     }),
   });
+  const instanceKeys = ["iim_instance_id", "iim_instance_name", "iim_instance_description"];
   const menuKeys = [
     "menu_max_no_input",
     "menu_max_invalid",
@@ -254,21 +284,30 @@ document.getElementById("tel-form").addEventListener("submit", async (e) => {
     "menu_max_input_timeout",
     "menu_inputs_acceptable",
     "voice_files_path",
+    ...instanceKeys,
   ];
   let menuOk = true;
+  let menuErr = "";
   for (const key of menuKeys) {
     const res = await api("/v1/config/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ key, value: document.getElementById(key).value.trim() }),
     });
-    if (!res.ok) menuOk = false;
+    if (!res.ok) {
+      menuOk = false;
+      const err = await res.json().catch(() => ({}));
+      menuErr = err.error || menuErr;
+    } else if (typeof window.applyInstanceBrand === "function" && key.startsWith("iim_instance_")) {
+      const all = await res.json().catch(() => null);
+      if (all) window.applyInstanceBrand(all);
+    }
   }
   const swagger = await swaggerRes.json().catch(() => ({}));
   if (!cfgRes.ok || !telRes.ok || !swaggerRes.ok || !menuOk) {
     const errCfg = cfgRes.ok ? {} : await cfgRes.json().catch(() => ({}));
     const errTel = telRes.ok ? {} : await telRes.json().catch(() => ({}));
-    msg.textContent = swagger.error || errCfg.error || errTel.error || "Save failed";
+    msg.textContent = swagger.error || errCfg.error || errTel.error || menuErr || "Save failed";
     return;
   }
   const link = document.getElementById("pulse-swagger");

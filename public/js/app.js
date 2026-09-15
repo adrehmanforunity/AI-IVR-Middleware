@@ -290,7 +290,7 @@ async function refresh() {
   const sc = st.counts || {};
   const range = st.range || {};
   document.getElementById("stations-hint").innerHTML =
-    `Range ${range.from ?? "—"}–${range.to ?? "—"} · ${st.ariOk ? "ARI snapshot ok" : "ARI snapshot missing"} · Detail on <a href="/stations">IIM stations</a>.`;
+    `Range ${range.from ?? "—"}–${range.to ?? "—"} · ${st.ariOk ? "ARI snapshot ok" : "ARI snapshot missing"} · Detail on <a href="/stations">IIM Station monitor</a>.`;
   document.getElementById("stations-kpis").innerHTML = `
     <div class="perf-grid">
       <div><span class="muted">Idle</span><div>${sc.idle ?? 0}</div></div>

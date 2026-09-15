@@ -13,6 +13,11 @@ const setupBody = {
     matchTrunk: { type: "string", description: "Trunk/endpoint name, empty = any" },
     maxConcurrent: { type: "number", minimum: 1 },
     ivrId: { type: "number", nullable: true, description: "IVR to run after admit" },
+    postCallSurveyEnabled: {
+      type: "boolean",
+      description: "CSAT after the agent hangs up. Reuses the live Pulse interaction/session.",
+    },
+    postCallSurveyIvrId: { type: "number", nullable: true, description: "IVR used only for post-call CSAT" },
   },
 };
 
@@ -76,6 +81,8 @@ export async function registerSetupRoutes(
         matchTrunk?: string;
         maxConcurrent?: number;
         ivrId?: number | null;
+        postCallSurveyEnabled?: boolean;
+        postCallSurveyIvrId?: number | null;
       };
       if (!body.matchDid?.trim() && !body.matchTrunk?.trim()) {
         return reply.code(400).send({ error: "matchDid or matchTrunk is required" });
@@ -83,7 +90,8 @@ export async function registerSetupRoutes(
       try {
         return store.createSetup(body, who(req));
       } catch (err) {
-        return reply.code(503).send({ error: err instanceof Error ? err.message : String(err) });
+        const code = (err as { code?: string }).code === "BAD_REQUEST" ? 400 : 503;
+        return reply.code(code).send({ error: err instanceof Error ? err.message : String(err) });
       }
     },
   );
@@ -104,8 +112,9 @@ export async function registerSetupRoutes(
       try {
         return store.updateSetup(id, req.body as object, who(req));
       } catch (err) {
-        const code = (err as { code?: string }).code === "NOT_FOUND" ? 404 : 503;
-        return reply.code(code).send({ error: err instanceof Error ? err.message : String(err) });
+        const code = (err as { code?: string }).code;
+        const status = code === "NOT_FOUND" ? 404 : code === "BAD_REQUEST" ? 400 : 503;
+        return reply.code(status).send({ error: err instanceof Error ? err.message : String(err) });
       }
     },
   );

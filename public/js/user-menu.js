@@ -10,7 +10,7 @@ function passwordModalHtml() {
         <input id="pw-next" type="password" minlength="8" required autocomplete="new-password" />
         <p class="muted" id="pw-msg"></p>
         <div class="modal-actions">
-          <button class="btn ghost" type="button" id="pw-cancel">Cancel</button>
+          <button class="btn btn-outline-secondary" type="button" id="pw-cancel">Cancel</button>
           <button class="btn" type="submit">Save</button>
         </div>
       </form>
@@ -108,12 +108,34 @@ function bindUserMenu() {
 
 const DEFAULT_PULSE_SWAGGER = "https://petstore.swagger.io/";
 
+function applyInstanceBrand(settings) {
+  const name = String(settings.iim_instance_name || "IIM").trim() || "IIM";
+  const id = String(settings.iim_instance_id || "").trim();
+  const desc = String(settings.iim_instance_description || "").trim();
+  const brandName = document.getElementById("iim-brand-name");
+  if (brandName) brandName.textContent = name;
+  const meta = document.getElementById("iim-brand-meta");
+  if (meta) {
+    const parts = [];
+    if (id) parts.push(id);
+    if (desc) parts.push(desc);
+    meta.textContent = parts.join(" · ");
+    meta.hidden = !parts.length;
+    if (desc) meta.title = desc;
+  }
+  if (document.title && name && document.title.endsWith("IIM")) {
+    document.title = document.title.replace(/IIM$/, name);
+  }
+}
+window.applyInstanceBrand = applyInstanceBrand;
+
 function bindPulseSwaggerLink() {
-  const a = document.getElementById("pulse-swagger");
-  if (!a) return;
   fetch("/v1/config/settings", { credentials: "same-origin" })
     .then((res) => (res.ok ? res.json() : {}))
     .then((settings) => {
+      applyInstanceBrand(settings);
+      const a = document.getElementById("pulse-swagger");
+      if (!a) return;
       const url = String(settings.pulse_swagger_url || DEFAULT_PULSE_SWAGGER).trim();
       if (/^https?:\/\//i.test(url)) {
         a.href = url;

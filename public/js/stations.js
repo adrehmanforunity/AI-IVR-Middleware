@@ -88,7 +88,7 @@ function pagedView(board) {
 function render(board) {
   document.getElementById("range-hint").innerHTML = `Owned range <strong>${esc(board.range.from)}–${esc(
     board.range.to,
-  )}</strong> — change on <a href="/telephony">Telephony Setup</a>. ${
+  )}</strong> — change on <a href="/telephony">IIM Setup</a>. ${
     board.ariOk ? "ARI snapshot cached ~4s." : "ARI not available — PBX registration unknown; live IIM calls still show."
   }${board.truncated ? " List capped." : ""}`;
   document.getElementById("refresh-hint").textContent = board.refreshedAt
@@ -126,7 +126,7 @@ function render(board) {
           ? `${esc(s.live.state)} · ${esc(s.live.callerId) || "no CID"} → ${esc(s.live.did) || "—"}`
           : "<span class='muted'>—</span>"
       }</td>
-      <td><button class="btn ghost" type="button" data-edit="${esc(s.extension)}">Edit</button></td>
+      <td><button class="btn btn-outline-secondary" type="button" data-edit="${esc(s.extension)}">Edit</button></td>
     </tr>`,
       )
       .join("")}</tbody></table>`;
@@ -147,9 +147,9 @@ function renderPager(view) {
   const current = view.current;
   pager.hidden = false;
   pager.innerHTML = `
-    <button class="btn ghost" type="button" id="page-prev" ${current <= 1 ? "disabled" : ""}>Previous</button>
+    <button class="btn btn-outline-secondary" type="button" id="page-prev" ${current <= 1 ? "disabled" : ""}>Previous</button>
     <span class="muted">Page ${current} of ${pages} · ${view.total} extensions · ${pageSize} per page</span>
-    <button class="btn ghost" type="button" id="page-next" ${current >= pages ? "disabled" : ""}>Next</button>`;
+    <button class="btn btn-outline-secondary" type="button" id="page-next" ${current >= pages ? "disabled" : ""}>Next</button>`;
   document.getElementById("page-prev").addEventListener("click", () => {
     if (page > 1) {
       page -= 1;
@@ -181,7 +181,7 @@ function openEdit(row) {
           <input id="st-notes" value="${esc(row.notes)}" autocomplete="off" />
           <p class="muted" id="st-msg"></p>
           <div class="modal-actions">
-            <button class="btn ghost" type="button" id="st-cancel">Cancel</button>
+            <button class="btn btn-outline-secondary" type="button" id="st-cancel">Cancel</button>
             <button class="btn" type="submit">Save</button>
           </div>
         </form>

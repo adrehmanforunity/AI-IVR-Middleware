@@ -53,6 +53,12 @@
       '<path d="M4 17a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7H4z" /><path d="M4 13h16" /><path d="M16 17h.01" />',
     "memory":
       '<rect x="4" y="6" width="16" height="12" rx="1" /><path d="M8 6V4" /><path d="M12 6V4" /><path d="M16 6V4" /><path d="M8 20v-2" /><path d="M12 20v-2" /><path d="M16 20v-2" /><path d="M6 12h12" />',
+    terminal:
+      '<path d="M5 7l5 5-5 5" /><path d="M12 17h7" /><rect x="3" y="4" width="18" height="16" rx="2" />',
+    maximize:
+      '<path d="M4 9V4h5" /><path d="M20 9V4h-5" /><path d="M4 15v5h5" /><path d="M20 15v5h-5" />',
+    minimize:
+      '<path d="M9 4H4v5" /><path d="M15 4h5v5" /><path d="M9 20H4v-5" /><path d="M15 20h5v-5" />',
   };
 
   function icon(name, cls) {

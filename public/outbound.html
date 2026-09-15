@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Outbound routing — IIM</title>
     <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
-    <link rel="stylesheet" href="/css/iim.css?v=12" />
+    <link rel="stylesheet" href="/css/iim.css?v=15" />
   </head>
   <body data-nav="/outbound">
     <div class="page">
@@ -22,6 +22,8 @@
               <p>
                 Trunks IIM uses when it places a call — robo campaigns, agents, or both. The list from Asterisk is
                 for reference; type or pick a trunk name here so outbound knows which path to use.
+                Post-call survey (CSAT) is optional after the agent hangs up, on the same Pulse session. It does not
+                run if the customer hangs up first.
               </p>
             </div>
           </div>
@@ -57,22 +59,36 @@
                   <input id="trunk" required placeholder="as on Asterisk" />
                 </div>
                 <div class="check">
+                  <input id="postCallSurveyEnabled" type="checkbox" />
+                  <label for="postCallSurveyEnabled">Post-call survey (CSAT)</label>
+                </div>
+                <div>
+                  <label for="postCallSurveyIvrId">Survey IVR</label>
+                  <select id="postCallSurveyIvrId">
+                    <option value="">None</option>
+                  </select>
+                  <div class="hint">
+                    Own IVR document — one menu or many levels. Reuses the live Pulse session; no new Create Interaction
+                    / Create Session. Only if the agent ends the call.
+                  </div>
+                </div>
+                <div class="check">
                   <input id="enabled" type="checkbox" checked />
                   <label for="enabled">Enabled</label>
                 </div>
               </div>
-              <div class="row" style="margin-top: 16px">
-                <button class="btn" type="submit">Save</button>
-                <button class="btn ghost" type="button" id="reset">New route</button>
+              <div class="btn-row" style="margin-top: 16px">
+                <button class="btn btn-primary" type="submit">Save</button>
+                <button class="btn btn-outline-secondary" type="button" id="reset">New route</button>
                 <span class="muted" id="msg"></span>
               </div>
             </form>
           </section>
 
           <section class="panel">
-            <div class="row" style="justify-content: space-between; align-items: center">
-              <h3 style="margin: 0">Trunks on Asterisk</h3>
-              <button class="btn ghost" type="button" id="refresh-trunks">Refresh</button>
+            <div class="panel-head">
+              <h3>Trunks on Asterisk</h3>
+              <button class="btn btn-outline-secondary" type="button" id="refresh-trunks">Refresh</button>
             </div>
             <p class="muted">
               Names that are not phone extensions (extensions are numbers like 2098 or 3001). Click a row to copy the
@@ -85,9 +101,9 @@
       </div>
     </div>
     <script src="/vendor/tabler/tabler.min.js"></script>
-    <script src="/js/icons.js?v=1"></script>
-    <script src="/js/layout.js?v=2"></script>
-    <script src="/js/user-menu.js?v=4"></script>
-    <script src="/js/outbound.js?v=2"></script>
+    <script src="/js/icons.js?v=3"></script>
+    <script src="/js/layout.js?v=6"></script>
+    <script src="/js/user-menu.js?v=6"></script>
+    <script src="/js/outbound.js?v=5"></script>
   </body>
 </html>

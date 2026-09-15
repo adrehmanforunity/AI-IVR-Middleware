@@ -28,6 +28,9 @@ export type OutboundRoute = {
   trunk: string;
   audience: OutboundAudience;
   enabled: boolean;
+  /** CSAT after the agent hangs up. Reuses the live Pulse interaction/session. */
+  postCallSurveyEnabled: boolean;
+  postCallSurveyIvrId: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -38,6 +41,8 @@ export type OutboundRouteInput = {
   trunk: string;
   audience?: OutboundAudience;
   enabled?: boolean;
+  postCallSurveyEnabled?: boolean;
+  postCallSurveyIvrId?: number | null;
 };
 
 export type CallSetup = {
@@ -48,6 +53,9 @@ export type CallSetup = {
   matchTrunk: string;
   maxConcurrent: number;
   ivrId: number | null;
+  /** CSAT after the agent hangs up. Reuses the live Pulse interaction/session. */
+  postCallSurveyEnabled: boolean;
+  postCallSurveyIvrId: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -184,7 +192,21 @@ export type CallSession = {
   expectedWaitSec: number | null;
   callerType: string | null;
   customer: unknown;
+  /** From Create Interaction. */
+  isCliAlreadyExist: boolean | null;
+  /** From Create Interaction (Pulse IVR route id). */
+  ivrRouting: number | null;
+  /** From Create Session. */
+  isPriority: boolean | null;
+  /** From Create Session. */
+  isHighAlert: boolean | null;
+  /** Sent on Create Session and kept if Pulse echoes it. */
+  recordingRelativePath: string;
+  /** Survey IVR to run if the agent hangs up first (CSAT). Null if caller drop or survey off. */
+  postCallSurveyIvrId: number | null;
   rejectReason: RejectReason | string | null;
+  /** True after Close Session finished (success or gave up). In-memory only. */
+  pulseClosed: boolean;
   startedAt: string;
   endedAt: string | null;
 };

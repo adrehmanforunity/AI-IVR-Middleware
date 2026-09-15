@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Alert mail (SMTP) — IIM</title>
+    <title>SMTP — IIM</title>
     <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
-    <link rel="stylesheet" href="/css/iim.css?v=12" />
+    <link rel="stylesheet" href="/css/iim.css?v=15" />
   </head>
   <body data-nav="/alerts">
     <div class="page">
@@ -18,7 +18,7 @@
           <div class="container-xl">
             <div class="hello">
             <div>
-              <h2>Alert mail (SMTP)</h2>
+              <h2>SMTP</h2>
               <p>
                 This process runs unattended. Configure any SMTP here (Gmail, Microsoft 365, a local relay, or a
                 provider). Critical events — AMI/ARI down, SQLite, process crashes, AICB, and host CPU/memory/disk at
@@ -30,11 +30,11 @@
 
           <section class="panel">
             <h3>Presets (fill the form — still Save)</h3>
-            <div class="row" style="flex-wrap: wrap">
-              <button class="btn ghost" type="button" id="preset-gmail-587">Gmail STARTTLS 587</button>
-              <button class="btn ghost" type="button" id="preset-gmail-465">Gmail TLS 465</button>
-              <button class="btn ghost" type="button" id="preset-m365">Microsoft 365</button>
-              <button class="btn ghost" type="button" id="preset-local">Local mail (port 25, no auth)</button>
+            <div class="btn-row">
+              <button class="btn btn-outline-secondary" type="button" id="preset-gmail-587">Gmail STARTTLS 587</button>
+              <button class="btn btn-outline-secondary" type="button" id="preset-gmail-465">Gmail TLS 465</button>
+              <button class="btn btn-outline-secondary" type="button" id="preset-m365">Microsoft 365</button>
+              <button class="btn btn-outline-secondary" type="button" id="preset-local">Local mail (port 25, no auth)</button>
             </div>
           </section>
 
@@ -117,9 +117,9 @@
                   <div class="hint">Also receive AICB (all inbound channels busy) and similar call events.</div>
                 </div>
               </div>
-              <div class="row" style="margin-top: 16px">
-                <button class="btn" type="submit">Save</button>
-                <button class="btn ghost" type="button" id="test">Send test</button>
+              <div class="btn-row" style="margin-top: 16px">
+                <button class="btn btn-primary" type="submit">Save</button>
+                <button class="btn btn-outline-secondary" type="button" id="test">Send test</button>
                 <span class="muted" id="msg"></span>
               </div>
             </form>
@@ -129,9 +129,9 @@
       </div>
     </div>
     <script src="/vendor/tabler/tabler.min.js"></script>
-    <script src="/js/icons.js?v=1"></script>
-    <script src="/js/layout.js?v=2"></script>
-    <script src="/js/user-menu.js?v=4"></script>
+    <script src="/js/icons.js?v=3"></script>
+    <script src="/js/layout.js?v=6"></script>
+    <script src="/js/user-menu.js?v=6"></script>
     <script src="/js/alerts.js?v=1"></script>
   </body>
 </html>

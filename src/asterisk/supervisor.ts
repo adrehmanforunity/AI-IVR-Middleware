@@ -7,6 +7,7 @@ import type { TelephonyConfig } from "../domain/types.js";
 import { CallRegistry } from "../calls/registry.js";
 import { InboundController } from "../calls/inbound.js";
 import { PulseClient } from "../pulse/client.js";
+import { PulseLifecycle } from "../pulse/lifecycle.js";
 import { IvrEngine } from "../ivr/engine.js";
 import { buildStationsBoard, STATIONS_CACHE_MS, type StationsBoard } from "../stations/board.js";
 
@@ -28,6 +29,7 @@ export type SupervisorSnapshot = {
   ari: LinkStatus & { restState: string; wsState: string };
   sqlite: { ok: boolean; lastError: string | null; usingSnapshot: boolean };
   stasisApp: string;
+  instance: { id: string; name: string; description: string };
   setups: ReturnType<CallRegistry["setupsWithCounts"]>;
   activeCalls: number;
 };
@@ -59,8 +61,9 @@ export class Supervisor {
     this.ari = new AriClient(log);
     this.registry = new CallRegistry(store);
     this.pulse = new PulseClient(store, log);
-    this.ivr = new IvrEngine(store, this.registry, this.ari, this.pulse, log);
-    this.inbound = new InboundController(store, this.registry, this.ari, this.ivr, this.pulse, log);
+    const lifecycle = new PulseLifecycle(store, this.pulse, log);
+    this.ivr = new IvrEngine(store, this.registry, this.ari, this.pulse, lifecycle, log);
+    this.inbound = new InboundController(store, this.registry, this.ari, this.ivr, this.pulse, lifecycle, log);
 
     // AMI stays connected (login + keepalive) but is not used for call control.
     this.ami.on("journal", (row: { level: TelephonyEvent["level"]; message: string }) => {
@@ -261,6 +264,7 @@ export class Supervisor {
       ari: { ...this.ari.status },
       sqlite: this.store.status(),
       stasisApp: this.store.getTarget().stasisApp,
+      instance: this.store.getInstance(),
       setups: this.registry.setupsWithCounts(),
       activeCalls: this.registry.listActive().length,
     };

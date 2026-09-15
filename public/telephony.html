@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Telephony Setup — IIM</title>
+    <title>IIM Setup — IIM</title>
     <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
-    <link rel="stylesheet" href="/css/iim.css?v=12" />
+    <link rel="stylesheet" href="/css/iim.css?v=15" />
   </head>
   <body data-nav="/telephony">
     <div class="page">
@@ -18,25 +18,49 @@
           <div class="container-xl">
             <div class="hello">
             <div>
-              <h2>Telephony Setup</h2>
+              <h2>IIM Setup</h2>
               <p>
                 AMI and ARI are separate. While a link is enabled it keeps auto-reconnecting after that link's retry
                 delay. Disable it to drop the socket and stop retries. Independent of call-setup drain.
+                Give this process its own ID, name, and description when you run more than one IIM.
               </p>
             </div>
           </div>
 
-          <div class="cards" id="cards"></div>
+          <div class="stat-grid" id="cards"></div>
 
           <form id="tel-form">
+            <section class="panel">
+              <h3>This IIM instance</h3>
+              <p class="muted">
+                Identity of this process. Other IIM hosts (lab, production, a second bank) must use a different ID.
+                Stored in this instance’s SQLite — keep a separate database file per process.
+              </p>
+              <div class="form-grid">
+                <div>
+                  <label for="iim_instance_id">Instance ID</label>
+                  <input id="iim_instance_id" required placeholder="iim-lab-1" />
+                  <div class="hint">2–64 letters, numbers, dots, hyphens, or underscores. Assigned on first start if empty.</div>
+                </div>
+                <div>
+                  <label for="iim_instance_name">Instance name</label>
+                  <input id="iim_instance_name" required placeholder="Lab IIM" maxlength="80" />
+                </div>
+                <div class="full">
+                  <label for="iim_instance_description">Description</label>
+                  <input id="iim_instance_description" placeholder="What this process is for" maxlength="500" />
+                </div>
+              </div>
+            </section>
+
             <div class="two-panels">
               <section class="panel">
                 <h3>AMI (Asterisk Manager Interface)</h3>
                 <p class="muted" id="ami-hint">TCP control channel. Defaults: host 127.0.0.1, port 5038, user iim.</p>
-                <div class="row" style="margin: 12px 0 16px">
-                  <button class="btn" type="button" id="ami-enable">Enable &amp; connect</button>
-                  <button class="btn ghost" type="button" id="ami-disable">Disable &amp; disconnect</button>
-                  <button class="btn ghost" type="button" id="ami-reconnect">Reconnect</button>
+                <div class="btn-row">
+                  <button class="btn btn-primary" type="button" id="ami-enable">Enable &amp; connect</button>
+                  <button class="btn btn-outline-secondary" type="button" id="ami-disable">Disable &amp; disconnect</button>
+                  <button class="btn btn-outline-secondary" type="button" id="ami-reconnect">Reconnect</button>
                 </div>
                 <div class="form-grid">
                   <div>
@@ -70,10 +94,10 @@
               <section class="panel">
                 <h3>ARI (Asterisk REST Interface)</h3>
                 <p class="muted" id="ari-hint">HTTP + WebSocket. Defaults: http://host:8088/ari, user iim, app iim-ivr.</p>
-                <div class="row" style="margin: 12px 0 16px">
-                  <button class="btn" type="button" id="ari-enable">Enable &amp; connect</button>
-                  <button class="btn ghost" type="button" id="ari-disable">Disable &amp; disconnect</button>
-                  <button class="btn ghost" type="button" id="ari-reconnect">Reconnect</button>
+                <div class="btn-row">
+                  <button class="btn btn-primary" type="button" id="ari-enable">Enable &amp; connect</button>
+                  <button class="btn btn-outline-secondary" type="button" id="ari-disable">Disable &amp; disconnect</button>
+                  <button class="btn btn-outline-secondary" type="button" id="ari-reconnect">Reconnect</button>
                 </div>
                 <div class="form-grid">
                   <div>
@@ -124,7 +148,7 @@
               <h3>IIM stations (system range)</h3>
               <p class="muted">
                 Agent-side PBX extensions this process owns (default <strong>3001–3999</strong>). Other phones (2098, …)
-                are not ours — IIM will not control them. Live view: <a href="/stations">IIM stations</a>. This is
+                are not ours — IIM will not control them. Live view: <a href="/stations">IIM Station monitor</a>. This is
                 <strong>not</strong> the inbound DID list; those belong in Inbound routing (for example lab DID 7777).
               </p>
               <div class="form-grid">
@@ -212,9 +236,9 @@
             </section>
 
             <section class="panel">
-              <div class="row">
-                <button class="btn" type="submit">Save settings</button>
-                <button class="btn ghost" type="button" id="fill-defaults">Fill defaults</button>
+              <div class="btn-row">
+                <button class="btn btn-primary" type="submit">Save settings</button>
+                <button class="btn btn-outline-secondary" type="button" id="fill-defaults">Fill defaults</button>
                 <span class="muted" id="save-msg"></span>
               </div>
               <p class="muted" style="margin-top: 10px">
@@ -232,11 +256,11 @@
             </section>
             <section class="panel">
               <h3>Log tail</h3>
-              <div class="row" style="margin-bottom: 10px">
-                <button class="btn ghost" type="button" data-log="ami">AMI wire</button>
-                <button class="btn ghost" type="button" data-log="ari">ARI wire</button>
-                <button class="btn ghost" type="button" data-log="app">App log</button>
-                <button class="btn ghost" type="button" id="log-refresh">Refresh</button>
+              <div class="btn-row">
+                <button class="btn btn-outline-secondary" type="button" data-log="ami">AMI wire</button>
+                <button class="btn btn-outline-secondary" type="button" data-log="ari">ARI wire</button>
+                <button class="btn btn-outline-secondary" type="button" data-log="app">App log</button>
+                <button class="btn btn-outline-secondary" type="button" id="log-refresh">Refresh</button>
               </div>
               <p class="muted" id="log-path"></p>
               <div class="log-pane" id="log-text">Loading…</div>
@@ -247,9 +271,9 @@
       </div>
     </div>
     <script src="/vendor/tabler/tabler.min.js"></script>
-    <script src="/js/icons.js?v=1"></script>
-    <script src="/js/layout.js?v=2"></script>
-    <script src="/js/user-menu.js?v=4"></script>
-    <script src="/js/telephony.js?v=7"></script>
+    <script src="/js/icons.js?v=3"></script>
+    <script src="/js/layout.js?v=6"></script>
+    <script src="/js/user-menu.js?v=6"></script>
+    <script src="/js/telephony.js?v=9"></script>
   </body>
 </html>

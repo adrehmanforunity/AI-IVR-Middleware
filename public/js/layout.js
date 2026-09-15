@@ -16,24 +16,28 @@
         <span class="navbar-toggler-icon"></span>
       </button>
       <h1 class="navbar-brand navbar-brand-autodark">
-        <a href="/app">${icon("activity")} IIM</a>
+        <a href="/app" id="iim-brand">${icon("activity")} <span id="iim-brand-name">IIM</span></a>
       </h1>
+      <div id="iim-brand-meta" class="px-3 pb-2 text-secondary" style="font-size: 11px; line-height: 1.35" hidden></div>
       <div class="collapse navbar-collapse" id="sidebar-menu">
         <ul class="navbar-nav pt-lg-3">
           <li class="nav-item"><span class="nav-link disabled">Monitoring</span></li>
           ${item("/app", "Live dashboard", "layout-dashboard")}
-          ${item("/stations", "IIM stations", "headphones")}
+          <li class="nav-item mt-2"><span class="nav-link disabled">Core System</span></li>
+          ${item("/telephony", "IIM Setup", "phone")}
+          ${item("/stations", "IIM Station monitor", "headphones")}
+          ${item("/alerts", "SMTP", "mail")}
+          ${item("/console", "Console", "terminal")}
           ${item("/logs", "Download logs", "download")}
           ${item("/docs", "IIM Swagger", "api", { blank: true })}
-          ${item("https://petstore.swagger.io/", "PULSE Swagger", "heart-rate", { id: "pulse-swagger", blank: true })}
-          <li class="nav-item mt-2"><span class="nav-link disabled">Management</span></li>
+          <li class="nav-item mt-2"><span class="nav-link disabled">Call Handling</span></li>
           ${item("/setups", "Inbound routing", "phone-incoming")}
           ${item("/outbound", "Outbound routing", "phone-outgoing")}
           ${item("/ivrs", "IVRs", "git")}
           ${item("/functions", "IVR functions", "function")}
-          ${item("/telephony", "Telephony Setup", "phone")}
+          <li class="nav-item mt-2"><span class="nav-link disabled">PULSE</span></li>
           ${item("/pulse", "PULSE API End Point Setup", "plug")}
-          ${item("/alerts", "Alert mail (SMTP)", "mail")}
+          ${item("https://petstore.swagger.io/", "PULSE Swagger", "heart-rate", { id: "pulse-swagger", blank: true })}
         </ul>
       </div>`;
   }

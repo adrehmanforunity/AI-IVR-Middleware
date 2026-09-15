@@ -25,6 +25,15 @@ async function main(): Promise<void> {
 
   const store = new ConfigStore(env, log);
   store.open();
+  const instance = store.getInstance();
+  log.info(
+    {
+      component: "process",
+      instanceId: instance.id,
+      instanceName: instance.name,
+    },
+    "IIM instance identity",
+  );
 
   const host = new HostSampler([
     { label: "SQLite", path: env.SQLITE_PATH },

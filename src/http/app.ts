@@ -25,6 +25,7 @@ import { registerAuthRoutes, userFromRequest } from "./routes/auth.js";
 import { registerStationRoutes } from "./routes/stations.js";
 import { registerSmtpRoutes } from "./routes/smtp.js";
 import { registerLogRoutes } from "./routes/logs.js";
+import { registerConsoleRoutes } from "./routes/console.js";
 import type { AlertService } from "../mail/alerts.js";
 import type { HostSampler } from "../ops/host.js";
 import {
@@ -60,6 +61,10 @@ export async function buildApp(opts: {
   await app.register(cookie, { secret: opts.env.API_KEY });
 
   app.addHook("onResponse", (req, reply, done) => {
+    if (requestPath(req) === "/v1/console/stream") {
+      done();
+      return;
+    }
     opts.log.info(
       { component: "http", method: req.method, url: req.url, statusCode: reply.statusCode },
       "request",
@@ -115,7 +120,7 @@ export async function buildApp(opts: {
         version: "0.1.0",
       },
       tags: [
-        { name: "ops", description: "Health and readiness" },
+        { name: "ops", description: "Health, readiness, and live process console" },
         { name: "auth", description: "Superadmin UI session" },
         { name: "config", description: "Persistent configuration" },
         { name: "asterisk", description: "AMI/ARI status and reconnect" },
@@ -161,6 +166,7 @@ export async function buildApp(opts: {
   app.get("/stations", async (req, reply) => sendProtectedHtml(req, reply, opts, "stations.html"));
   app.get("/alerts", async (req, reply) => sendProtectedHtml(req, reply, opts, "alerts.html"));
   app.get("/logs", async (req, reply) => sendProtectedHtml(req, reply, opts, "logs.html"));
+  app.get("/console", async (req, reply) => sendProtectedHtml(req, reply, opts, "console.html"));
 
   await app.register(async (scope) => {
     await scope.register(staticFiles, {
@@ -198,6 +204,7 @@ export async function buildApp(opts: {
   await registerStationRoutes(app, opts.supervisor, opts.store);
   await registerSmtpRoutes(app, opts.store, opts.alerts);
   await registerLogRoutes(app);
+  await registerConsoleRoutes(app);
   await registerReportRoutes(app, {
     store: opts.store,
     registry: opts.supervisor.registry,
