@@ -25,7 +25,6 @@ Voice files live on **Asterisk** (`/var/lib/asterisk/sounds/custom/…`), not on
 
 ```bash
 cp .env.example .env
-mkdir logs
 npm install
 npx tsx src/index.ts
 ```
@@ -73,9 +72,11 @@ Runtime:
 
 1. ARI `StasisStart` → match an **inbound route** (DID/trunk, enabled, under `maxConcurrent`).
 2. Unknown / drain / busy → ARI hangup (`rejected` or `busy`). Slot is reserved when the call is admitted.
-3. **Create Interaction** then **Create Session** run **while ringing**, before answer or reject. If either API is enabled (live URL or mock) and fails, the channel is rejected unanswered.
-4. If the route has an IVR, the **script starts unanswered**. `answer` is an IVR function. Extra `proc_createinteraction` / `proc_createsession` steps are skipped if ids already exist.
-5. If the route has **no** IVR, IIM answers after a successful Pulse screen (or immediately if those APIs are disabled).
+3. If the route has an IVR, **the first menu block runs while still ringing**. That document is the program: Create Interaction, Create Session, Answer, prompts, and so on. Fail on a block follows that block’s **Then if failed** (usually hangup).
+4. **Block duplicate callers** (inbound route) is checked when the Create Interaction block returns `isCliAlreadyExist=true`. The block fails, the call is rejected unanswered, logged, and counted.
+5. If the route has **no** IVR, IIM still Create Interaction → Create Session → answer itself.
+
+Lab sample IVR is not tied to DID **7777**. Hugo Bank seeds DID **7777** → **Hugo Bank IVR**. IVR prompts are **file names only** (`hugo-greeting`, `hugo-main-menu_{language}`). IIM Setup supplies `…/sounds/custom`; inbound **Voice subfolder** (e.g. `hugo`) supplies the next folder. Playback is `custom[/folder]/filename`. `{language}` becomes `ur` / `en` / `sn` / …. Do not write `custom/` in the IVR document. `proc_setlanguage ur` sets IIM files to Urdu and sends Pulse `languageQueueId` from IIM Setup (default **1**=Urdu, **2**=English).
 
 If Pulse returns `{ responseBody: … }`, IIM unwraps it. Create Interaction also stores `isCliAlreadyExist` and `ivrRouting`. Create Session also stores `isPriority`, `isHighAlert`, and `recordingRelativePath`.
 
@@ -111,7 +112,7 @@ Every admitted call carries:
 | `agentId` / `agentExtension` | PULSE when a transfer is required |
 | `uniqueId` | Asterisk channel Uniqueid |
 | `bridgeId` | Asterisk bridge when caller and agent are joined |
-| `language` | `0` Urdu (default), `1` English, `2` Sindhi, `3` Pashto, `4` Arabic |
+| `language` | IIM id `0` ur (default), `1` en, `2` sn, `3` ps, `4` ar, `5`–`9` ot5–ot9. Pulse `languageQueueId` is mapped on IIM Setup |
 | `currentMenu` | Current IVR step key |
 | `queuePosition` / `expectedWaitSec` | PULSE queue facts |
 | `callerType` | PULSE |
@@ -138,7 +139,7 @@ JSON (Pino) to **stdout** and `YYYYMMDDHH.log`. Wire dumps:
 
 Secrets (`api_key`, Basic auth, AMI `Secret`) are redacted as `***`.
 
-`LOG_DIR` (default `./logs`) is used only if that folder **already exists and is writable**. Otherwise: `%TEMP%\iim-logs` (Windows) or `/tmp/iim-logs`.
+IIM **proves it can write** to `LOG_DIR` (default `./logs`, relative to the Command Prompt folder), then creates `LOG_DIR/YYYYMMDD/` and writes `YYYYMMDDHH.log` / `.AMI` / `.ARI`. If that path cannot be created or a later write fails, it switches to `%TEMP%\iim-logs\YYYYMMDD\` (Windows) or `/tmp/iim-logs/YYYYMMDD/` — not `%TEMP%` itself. Startup line `hourly file logging ready` prints `logRoot`, `logPrimary`, and `logFallback`. stdout always still logs.
 
 ```
 ./logs/

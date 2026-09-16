@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>IVRs — IIM</title>
     <link rel="stylesheet" href="/vendor/tabler/tabler.min.css" />
-    <link rel="stylesheet" href="/css/iim.css?v=15" />
+    <link rel="stylesheet" href="/css/iim.css?v=16" />
   </head>
   <body data-nav="/ivrs">
     <div class="page">
@@ -19,7 +19,10 @@
             <div class="hello">
             <div>
               <h2>IVRs</h2>
-              <p>Pick an IVR to edit one <strong>menu</strong> at a time. Open <strong>Flow</strong> on a new page to see the call path, print it, or save it as PDF.</p>
+              <p>
+                Pick an IVR to edit one <strong>menu</strong> at a time. <strong>Analyze</strong> lists every voice file
+                this program will play so you can put them on Asterisk. Open <strong>Flow</strong> to see the call path.
+              </p>
             </div>
           </div>
 
@@ -61,6 +64,7 @@
               </div>
               <div class="btn-row" style="margin-top: 16px">
                 <button class="btn btn-primary" type="submit">Save IVR</button>
+                <button class="btn btn-outline-secondary" type="button" id="analyze-ivr">Analyze</button>
                 <button class="btn btn-outline-secondary" type="button" id="export-json">Export JSON</button>
                 <button class="btn btn-outline-secondary" type="button" id="open-flow">Open flow</button>
                 <button class="btn btn-outline-secondary" type="button" id="close-editor">Close</button>
@@ -68,6 +72,17 @@
               </div>
             </form>
           </section>
+          <div id="analyze-modal" class="modal-back" hidden>
+            <div class="modal-card modal-wide">
+              <h3 id="analyze-title">Analyze</h3>
+              <p class="muted" id="analyze-summary"></p>
+              <div id="analyze-body"></div>
+              <div class="modal-actions">
+                <button class="btn btn-outline-secondary" type="button" id="analyze-copy">Copy file list</button>
+                <button class="btn btn-primary" type="button" id="analyze-close">Close</button>
+              </div>
+            </div>
+          </div>
           </div>
         </div>
       </div>
@@ -76,6 +91,6 @@
     <script src="/js/icons.js?v=3"></script>
     <script src="/js/layout.js?v=6"></script>
     <script src="/js/user-menu.js?v=6"></script>
-    <script src="/js/ivrs.js?v=9"></script>
+    <script src="/js/ivrs.js?v=11"></script>
   </body>
 </html>

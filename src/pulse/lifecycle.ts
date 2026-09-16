@@ -27,10 +27,13 @@ export class PulseLifecycle {
   ) {}
 
   /**
-   * Create Interaction then Create Session while the channel is still ringing.
-   * Skip both only when neither API is enabled. Fail either → do not answer.
+   * Create Interaction, then (unless duplicate-CLI is blocked) Create Session,
+   * while the channel is still ringing. Fail either → do not answer.
    */
-  async screenBeforeAnswer(session: CallSession): Promise<PulseScreenResult> {
+  async screenBeforeAnswer(
+    session: CallSession,
+    opts: { blockDuplicateCallers?: boolean } = {},
+  ): Promise<PulseScreenResult> {
     const needInteraction = this.slotReady("createInteraction");
     const needSession = this.slotReady("createSession");
     if (!needInteraction && !needSession) {
@@ -40,6 +43,19 @@ export class PulseLifecycle {
 
     const created = await this.createInteraction(session);
     if (!created.ok) return created;
+
+    if (opts.blockDuplicateCallers && session.isCliAlreadyExist === true) {
+      this.log.warn(
+        {
+          component: "inbound",
+          isCliAlreadyExist: true,
+          blockDuplicateCallers: true,
+          ...callLogFields(session),
+        },
+        "this caller at this time was block as rejected reason isCliAlreadyExist=true, IVR Block duplicate callers enabled",
+      );
+      return { ok: false, reason: "cli_already_exist" };
+    }
 
     const opened = await this.createSession(session);
     if (!opened.ok) return opened;
@@ -150,6 +166,7 @@ export class PulseLifecycle {
         pulseError: result.error,
         mocked: result.mocked,
         action: body.action,
+        languageQueueId: body.languageQueueId,
         ...callLogFields(session),
       },
       "Add Interaction finished",
@@ -234,11 +251,19 @@ export class PulseLifecycle {
   }
 }
 
-export function addInteractionFieldsForFunction(name: string, arg: string): AddCallInteractionFields {
+export function addInteractionFieldsForFunction(
+  name: string,
+  arg: string,
+  opts?: { languageQueueId?: number },
+): AddCallInteractionFields {
   const lower = name.toLowerCase();
   const n = Number(String(arg).trim());
   const num = Number.isFinite(n) ? n : 0;
-  if (lower === "proc_setlanguagequeueid" || lower === "setlanguage") {
+  if (lower === "proc_setlanguage" || lower === "setlanguage") {
+    const languageQueueId = opts?.languageQueueId ?? 1;
+    return { languageQueueId, action: "LanguageSelected" };
+  }
+  if (lower === "proc_setlanguagequeueid") {
     return { languageQueueId: num, action: "LanguageSelected" };
   }
   if (lower === "proc_setmenuqueueid") {

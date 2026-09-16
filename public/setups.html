@@ -20,10 +20,10 @@
             <div>
               <h2>Inbound routing</h2>
               <p>
-                When a call comes in, match the number they dialed (DID) and optionally the trunk, then start that IVR.
-                Leave trunk empty to match any trunk — needed for lab calls from a phone (2098 → 7777).
-                Post-call survey (CSAT) is optional: a separate IVR after the agent hangs up, on the same Pulse
-                interaction and session. It does not run if the caller hangs up first.
+                When a call comes in, match DID/trunk and start that IVR at its <strong>first menu block</strong>
+                (still ringing). Put Pulse Create Interaction, Create Session, then Answer in that document — same
+                pattern as the sample. Fail on a block uses that block’s Then if failed. Post-call survey (CSAT) is
+                optional after the agent hangs up, on the same Pulse session.
               </p>
             </div>
           </div>
@@ -86,6 +86,24 @@
                   </select>
                   <div class="hint">Build the IVR under IVRs, then pick it here so this DID starts that program.</div>
                 </div>
+                <div>
+                  <label for="voiceFolder">Voice subfolder (optional)</label>
+                  <input id="voiceFolder" placeholder="leave blank for default" />
+                  <div class="hint">
+                    Blank = no extra folder (IIM Setup path + the IVR file name). Type a folder such as
+                    <code>hugo</code> so <code>hugo-greeting</code> plays as
+                    <code>custom/hugo/hugo-greeting</code>. Do not put <code>custom/</code> in the IVR file name.
+                  </div>
+                </div>
+                <div class="check">
+                  <input id="blockDuplicateCallers" type="checkbox" />
+                  <label for="blockDuplicateCallers">Block duplicate callers</label>
+                  <div class="hint">
+                    After Create Interaction, if Pulse <code>isCliAlreadyExist</code> is true, reject unanswered (no
+                    Create Session, no answer). Logged with reject reason <code>cli_already_exist</code> and counted
+                    on this route.
+                  </div>
+                </div>
                 <div class="check">
                   <input id="postCallSurveyEnabled" type="checkbox" />
                   <label for="postCallSurveyEnabled">Post-call survey (CSAT)</label>
@@ -132,6 +150,6 @@
     <script src="/js/icons.js?v=3"></script>
     <script src="/js/layout.js?v=6"></script>
     <script src="/js/user-menu.js?v=6"></script>
-    <script src="/js/setups.js?v=9"></script>
+    <script src="/js/setups.js?v=10"></script>
   </body>
 </html>

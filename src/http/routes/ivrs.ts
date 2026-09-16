@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ConfigStore } from "../../db/sqlite.js";
 import type { IvrCustomFunctionInput, IvrSaveInput } from "../../domain/types.js";
+import { analyzeIvrVoices } from "../../ivr/analyze.js";
+import { sanitizeVoiceFolder } from "../../ivr/voice.js";
 import { userFromRequest } from "./auth.js";
 
 export async function registerIvrRoutes(app: FastifyInstance, store: ConfigStore): Promise<void> {
@@ -103,6 +105,48 @@ export async function registerIvrRoutes(app: FastifyInstance, store: ConfigStore
         const code = (err as { code?: string }).code === "NOT_FOUND" ? 404 : 503;
         return reply.code(code).send({ error: err instanceof Error ? err.message : String(err) });
       }
+    },
+  );
+
+  app.post(
+    "/v1/ivrs/analyze",
+    {
+      schema: {
+        tags: ["ivr"],
+        summary: "List voice files this IVR document will play (Asterisk names + place-as paths)",
+        security: [{ apiKey: [] }],
+      },
+    },
+    async (req, reply) => {
+      const body = req.body as IvrSaveInput & { voiceFolder?: string };
+      if (!body?.menus?.length) {
+        return reply.code(400).send({ error: "menus are required" });
+      }
+      try {
+        return analyzeIvrVoices(body, store.getSettings(), sanitizeVoiceFolder(body.voiceFolder));
+      } catch (err) {
+        return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
+
+  app.get(
+    "/v1/ivrs/:id/analyze",
+    {
+      schema: {
+        tags: ["ivr"],
+        summary: "List voice files a saved IVR will play",
+        security: [{ apiKey: [] }],
+        params: { type: "object", properties: { id: { type: "number" } } },
+        querystring: { type: "object", properties: { voiceFolder: { type: "string" } } },
+      },
+    },
+    async (req, reply) => {
+      const id = Number((req.params as { id: string }).id);
+      const ivr = store.getIvr(id);
+      if (!ivr) return reply.code(404).send({ error: "not found" });
+      const q = req.query as { voiceFolder?: string };
+      return analyzeIvrVoices(ivr, store.getSettings(), sanitizeVoiceFolder(q.voiceFolder));
     },
   );
 

@@ -75,7 +75,13 @@ export async function registerLogRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const root = logRoot();
       if (!root) return reply.code(503).send({ error: "file logging is not available" });
-      return { root: root.root, source: root.source, files: listLogFiles() };
+      return {
+        root: root.root,
+        source: root.source,
+        primaryRoot: root.primaryRoot,
+        fallbackRoot: root.fallbackRoot,
+        files: listLogFiles(),
+      };
     },
   );
 

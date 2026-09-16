@@ -286,7 +286,8 @@ export class IvrEngine {
       return;
     }
     const root = this.store.getSettings()[VOICE_PATH_SETTING] || DEFAULT_VOICE_FILES_PATH;
-    const media = resolveVoiceMedia(sound, run.session.language, root);
+    const setup = run.session.setupId != null ? this.store.getSetup(run.session.setupId) : null;
+    const media = resolveVoiceMedia(sound, run.session.language, root, setup?.voiceFolder ?? "");
     if (!media) return;
     run.lastMedia = media;
     run.playbackId = await this.ari.play(run.session.uniqueId, media);
@@ -436,13 +437,14 @@ export class IvrEngine {
     if (!this.runs.has(run.session.uniqueId)) return;
     run.busy = true;
     try {
-      const result = await this.fns.run(opt.action, opt.param, {
+      const ctx = {
         session: run.session,
         menuKey: run.menuKey,
         digit,
         answered: run.answered,
-      });
-      run.answered = run.answered || result.ok === true;
+      };
+      const result = await this.fns.run(opt.action, opt.param, ctx);
+      run.answered = ctx.answered;
       this.registry.update(run.session);
       if (result.hangup || opt.action.toLowerCase() === "hangup") {
         await this.hangup(run);
@@ -498,8 +500,9 @@ export class IvrEngine {
 
   private async hangup(run: Run): Promise<void> {
     this.log.info({ component: "ivr", menu: run.menuKey, ...callLogFields(run.session) }, "IVR hangup");
-    await this.lifecycle.closeIfOpen(run.session, 1);
-    await this.ari.hangup(run.session.uniqueId, "normal");
+    const rejected = Boolean(run.session.rejectReason);
+    await this.lifecycle.closeIfOpen(run.session, rejected ? 0 : 1);
+    await this.ari.hangup(run.session.uniqueId, rejected ? "rejected" : "normal");
     this.stop(run.session.uniqueId, "hangup");
   }
 }

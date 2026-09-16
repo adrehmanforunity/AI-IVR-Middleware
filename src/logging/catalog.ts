@@ -22,84 +22,94 @@ const KIND: Record<string, LogKindName> = {
   ARI: "ari",
 };
 
-export function logRoot(): { root: string; source: "configured" | "temp" } | null {
+export function logRoot(): { root: string; source: "configured" | "temp"; primaryRoot?: string; fallbackRoot?: string } | null {
   const t = getLogTarget();
   if (!t?.root) return null;
-  return { root: t.root, source: t.source };
+  return { root: t.root, source: t.source, primaryRoot: t.primaryRoot, fallbackRoot: t.fallbackRoot };
+}
+
+function searchRoots(): string[] {
+  const t = getLogTarget();
+  if (!t?.root) return [];
+  const roots = [t.root, t.primaryRoot, t.fallbackRoot].filter(Boolean);
+  return [...new Set(roots.map((r) => path.resolve(r)))];
 }
 
 export function listLogFiles(max = 400): LogFileInfo[] {
-  const target = logRoot();
-  if (!target) return [];
-  const out: LogFileInfo[] = [];
-  let days: string[] = [];
-  try {
-    days = fs
-      .readdirSync(target.root, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && /^\d{8}$/.test(d.name))
-      .map((d) => d.name)
-      .sort()
-      .reverse();
-  } catch {
-    return [];
-  }
-  for (const day of days) {
-    const dir = path.join(target.root, day);
-    let names: string[] = [];
+  const byId = new Map<string, LogFileInfo>();
+  for (const root of searchRoots()) {
+    let days: string[] = [];
     try {
-      names = fs.readdirSync(dir);
+      days = fs
+        .readdirSync(root, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && /^\d{8}$/.test(d.name))
+        .map((d) => d.name);
     } catch {
       continue;
     }
-    names.sort().reverse();
-    for (const name of names) {
-      const id = `${day}/${name}`;
-      const m = LOG_ID_RE.exec(id);
-      if (!m) continue;
-      const abs = path.join(dir, name);
-      let st: fs.Stats;
+    for (const day of days) {
+      const dir = path.join(root, day);
+      let names: string[] = [];
       try {
-        st = fs.statSync(abs);
+        names = fs.readdirSync(dir);
       } catch {
         continue;
       }
-      if (!st.isFile()) continue;
-      const ext = m[3]!;
-      out.push({
-        id,
-        day: m[1]!,
-        hour: m[2]!.slice(-2),
-        kind: KIND[ext] ?? "app",
-        name,
-        size: st.size,
-        mtime: st.mtime.toISOString(),
-      });
-      if (out.length >= max) return out;
+      for (const name of names) {
+        const id = `${day}/${name}`;
+        const m = LOG_ID_RE.exec(id);
+        if (!m) continue;
+        const abs = path.join(dir, name);
+        let st: fs.Stats;
+        try {
+          st = fs.statSync(abs);
+        } catch {
+          continue;
+        }
+        if (!st.isFile()) continue;
+        const ext = m[3]!;
+        const row: LogFileInfo = {
+          id,
+          day: m[1]!,
+          hour: m[2]!.slice(-2),
+          kind: KIND[ext] ?? "app",
+          name,
+          size: st.size,
+          mtime: st.mtime.toISOString(),
+        };
+        const prev = byId.get(id);
+        if (!prev || prev.mtime < row.mtime) byId.set(id, row);
+      }
     }
   }
-  return out;
+  return [...byId.values()]
+    .sort((a, b) => b.id.localeCompare(a.id))
+    .slice(0, max);
 }
 
 export function resolveLogIds(ids: string[]): { abs: string; id: string; mtime: Date }[] {
-  const target = logRoot();
-  if (!target) return [];
-  const rootAbs = path.resolve(target.root);
+  const roots = searchRoots();
+  if (!roots.length) return [];
   const seen = new Set<string>();
   const out: { abs: string; id: string; mtime: Date }[] = [];
   for (const raw of ids) {
     const id = String(raw || "").replace(/\\/g, "/").trim();
     if (!LOG_ID_RE.test(id) || seen.has(id)) continue;
     seen.add(id);
-    const abs = path.resolve(rootAbs, id);
-    const rel = path.relative(rootAbs, abs);
-    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) continue;
-    try {
-      const st = fs.statSync(abs);
-      if (!st.isFile()) continue;
-      out.push({ abs, id, mtime: st.mtime });
-    } catch {
-      // skip missing
+    let best: { abs: string; id: string; mtime: Date } | null = null;
+    for (const rootAbs of roots) {
+      const abs = path.resolve(rootAbs, id);
+      const rel = path.relative(rootAbs, abs);
+      if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) continue;
+      try {
+        const st = fs.statSync(abs);
+        if (!st.isFile()) continue;
+        if (!best || st.mtime > best.mtime) best = { abs, id, mtime: st.mtime };
+      } catch {
+        // try next root
+      }
     }
+    if (best) out.push(best);
   }
   return out;
 }

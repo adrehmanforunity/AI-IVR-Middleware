@@ -17,7 +17,9 @@ export type RejectReason =
   | "pulse_reject"
   | "pulse_timeout"
   | "pulse_not_configured"
-  | "pulse_error";
+  | "pulse_error"
+  /** Pulse Create Interaction returned isCliAlreadyExist and this inbound route blocks duplicates. */
+  | "cli_already_exist";
 
 export type OutboundAudience = "robo" | "agents" | "both";
 
@@ -53,6 +55,16 @@ export type CallSetup = {
   matchTrunk: string;
   maxConcurrent: number;
   ivrId: number | null;
+  /**
+   * Optional Asterisk folder under the voice root (`sounds/custom`). Blank = file name only
+   * (`hugo-greeting` → `custom/hugo-greeting`, or `custom/urdu/…` for old bare BOK names).
+   * Set to `hugo` → `custom/hugo/hugo-greeting`.
+   */
+  voiceFolder: string;
+  /** Reject unanswered when Pulse Create Interaction returns isCliAlreadyExist=true. */
+  blockDuplicateCallers: boolean;
+  /** Lifetime count of duplicate-CLI rejects on this inbound route. */
+  duplicateBlockCount: number;
   /** CSAT after the agent hangs up. Reuses the live Pulse interaction/session. */
   postCallSurveyEnabled: boolean;
   postCallSurveyIvrId: number | null;
@@ -162,7 +174,7 @@ export type IvrCustomFunctionInput = {
   enabled?: boolean;
 };
 
-export type CallerLanguage = 0 | 1 | 2 | 3 | 4;
+export type CallerLanguage = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export type CallSession = {
   /** GUID created by IIM for this call (CallsInternalID). */
@@ -185,7 +197,7 @@ export type CallSession = {
   did: string;
   trunk: string;
   state: CallState;
-  /** 0=Urdu (default), 1=English, 2=Sindhi, 3=Pashto, 4=Arabic. */
+  /** Internal 0–9: ur, en, sn, ps, ar, ot5–ot9. Pulse queue id is mapped separately. */
   language: CallerLanguage;
   currentMenu: string | null;
   queuePosition: number | null;

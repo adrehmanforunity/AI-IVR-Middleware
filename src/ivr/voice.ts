@@ -1,20 +1,24 @@
 import type { CallerLanguage } from "../domain/types.js";
 import { toAriSound } from "./document.js";
+import { isCallerLanguage, LANGUAGE_CODE, LANGUAGE_FOLDER } from "./languages.js";
+
+export { LANGUAGE_CODE, LANGUAGE_FOLDER } from "./languages.js";
 
 export const DEFAULT_VOICE_FILES_PATH = "/var/lib/asterisk/sounds/custom";
 export const VOICE_PATH_SETTING = "voice_files_path";
 
-/** Folder name under the voice root for each caller language. */
-export const LANGUAGE_FOLDER: Record<CallerLanguage, string> = {
-  0: "urdu",
-  1: "english",
-  2: "sindhi",
-  3: "pashto",
-  4: "arabic",
-};
+export function languageCode(language: CallerLanguage | number | null | undefined): string {
+  const n = typeof language === "number" && isCallerLanguage(language) ? language : 0;
+  return LANGUAGE_CODE[n];
+}
+
+export function applyLanguageToken(file: string, language: CallerLanguage | number | null | undefined): string {
+  if (!file.includes("{language}")) return file;
+  return file.split("{language}").join(languageCode(language));
+}
 
 export function languageFolder(language: CallerLanguage | number | null | undefined): string {
-  const n = language === 0 || language === 1 || language === 2 || language === 3 || language === 4 ? language : 0;
+  const n = typeof language === "number" && isCallerLanguage(language) ? language : 0;
   return LANGUAGE_FOLDER[n];
 }
 
@@ -32,25 +36,47 @@ export function ariSoundsPrefix(voiceRoot: string): string {
 }
 
 /**
- * Menu files are stored as bare names (`BOK_GREETINGS`). Playback is
- * `sound:<custom>/<language>/<name>` on Asterisk, unless the value is already
- * a full ARI media URI or already under the custom prefix.
+ * Menu files are the prompt name only (`hugo-greeting`, `hugo-main-menu_{language}`).
+ * Asterisk path = IIM Setup voice root (`…/sounds/custom`) + optional inbound folder + that name.
+ * Bare names with no inbound folder and no `{language}` still use `custom/<urdu|english>/…` (lab BOK).
  */
 export function resolveVoiceMedia(
   file: string,
   language: CallerLanguage | number | null | undefined,
   voiceRoot = DEFAULT_VOICE_FILES_PATH,
+  voiceFolder = "",
 ): string {
-  const stripped = toAriSound(file);
+  const original = String(file ?? "");
+  const hadLanguageToken = original.includes("{language}");
+  const stripped = applyLanguageToken(toAriSound(original), language);
   if (!isPlayablePrompt(stripped)) return "";
   if (stripped.includes(":")) return stripped;
   const prefix = ariSoundsPrefix(voiceRoot);
-  const norm = stripped.replace(/^\/+/, "");
-  if (norm.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)) {
-    return `sound:${norm}`;
+  let relative = stripped.replace(/^\/+/, "");
+  const head = `${prefix.toLowerCase()}/`;
+  if (relative.toLowerCase().startsWith(head)) {
+    relative = relative.slice(prefix.length + 1);
   }
-  const folder = languageFolder(language);
-  return `sound:${prefix}/${folder}/${norm}`;
+  const pack = sanitizeVoiceFolder(voiceFolder);
+  if (pack) {
+    return `sound:${prefix}/${pack}/${relative}`;
+  }
+  if (hadLanguageToken || relative.includes("/")) {
+    return `sound:${prefix}/${relative}`;
+  }
+  return `sound:${prefix}/${languageFolder(language)}/${relative}`;
+}
+
+/** One folder name under `custom/` (no slashes). Empty = default. */
+export function sanitizeVoiceFolder(raw: string | null | undefined): string {
+  const part = String(raw ?? "")
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter(Boolean)[0] ?? "";
+  if (!part || part === "." || part === "..") return "";
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part)) return "";
+  return part;
 }
 
 /** Empty, `none`, or a JS `undefined`/`null` string — do not send to Asterisk. */

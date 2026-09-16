@@ -170,7 +170,7 @@
                 On Asterisk, not on this IIM host. Default
                 <code>/var/lib/asterisk/sounds/custom</code>. Put prompts in language folders:
                 <code>urdu</code>, <code>english</code>, <code>sindhi</code>, <code>pashto</code>,
-                <code>arabic</code>. Menus store the file name only (e.g. <code>BOK_GREETINGS</code>); IIM plays
+                <code>arabic</code>, <code>other5</code>–<code>other9</code>. Menus store the file name only (e.g. <code>BOK_GREETINGS</code>); IIM plays
                 <code>custom/urdu/BOK_GREETINGS</code> (or the current caller language).
               </p>
               <div class="form-grid">
@@ -178,6 +178,29 @@
                   <label for="voice_files_path">Voice files folder on Asterisk</label>
                   <input id="voice_files_path" value="/var/lib/asterisk/sounds/custom" required />
                 </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h3>Languages (IIM vs Pulse)</h3>
+              <p class="muted">
+                IVR uses <code>proc_setlanguage ur</code> (or <code>en</code>, <code>sn</code>, …) for our files and
+                <code>{language}</code> tokens. Pulse Add Call Interaction gets
+                <code>languageQueueId</code> from this table. Old Pulse middleware sent <strong>1 = Urdu</strong>,
+                <strong>2 = English</strong>.
+              </p>
+              <div class="table-responsive">
+                <table class="table" id="lang-pulse-table">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>IIM id</th>
+                      <th>Name</th>
+                      <th>Pulse languageQueueId</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
               </div>
             </section>
 

@@ -105,14 +105,15 @@ async function refresh() {
     return;
   }
   el.innerHTML = `<table class="table">
-    <thead><tr><th>Name</th><th>DID</th><th>Trunk</th><th>IVR</th><th>Survey</th><th>Live / cap</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>DID</th><th>Trunk</th><th>IVR</th><th>Dup block</th><th>Survey</th><th>Live / cap</th><th>Status</th><th></th></tr></thead>
     <tbody>${rows
       .map(
         (x) => `<tr>
         <td><strong>${esc(x.name)}</strong></td>
         <td>${esc(x.matchDid || "any")}</td>
         <td>${esc(x.matchTrunk || "any")}</td>
-        <td>${esc(ivrName(x.ivrId))}</td>
+        <td>${esc(ivrName(x.ivrId))}${x.voiceFolder ? ` · <code>${esc(x.voiceFolder)}</code>` : ""}</td>
+        <td>${x.blockDuplicateCallers ? `on · ${x.duplicateBlockCount ?? 0}` : "off"}</td>
         <td>${esc(surveyLabel(x))}</td>
         <td><button class="btn btn-outline-secondary" type="button" data-live="${x.id}">${x.activeCount}/${x.maxConcurrent}</button></td>
         <td>${x.enabled ? '<span class="tag on">ON</span>' : '<span class="tag off">DRAIN</span>'}</td>
@@ -146,7 +147,18 @@ async function refresh() {
   });
 }
 
-const LANG = { 0: "Urdu", 1: "English", 2: "Sindhi", 3: "Pashto", 4: "Arabic" };
+const LANG = {
+  0: "Urdu",
+  1: "English",
+  2: "Sindhi",
+  3: "Pashto",
+  4: "Arabic",
+  5: "Other 5",
+  6: "Other 6",
+  7: "Other 7",
+  8: "Other 8",
+  9: "Other 9",
+};
 let liveSetupId = null;
 let liveTimer = null;
 
@@ -258,6 +270,8 @@ function load(x) {
   );
   document.getElementById("maxConcurrent").value = x.maxConcurrent;
   document.getElementById("ivrId").value = x.ivrId || "";
+  document.getElementById("voiceFolder").value = x.voiceFolder || "";
+  document.getElementById("blockDuplicateCallers").checked = !!x.blockDuplicateCallers;
   document.getElementById("postCallSurveyEnabled").checked = !!x.postCallSurveyEnabled;
   document.getElementById("postCallSurveyIvrId").value = x.postCallSurveyIvrId || "";
   document.getElementById("enabled").checked = !!x.enabled;
@@ -270,6 +284,7 @@ function resetForm() {
   document.getElementById("form").reset();
   document.getElementById("matchTrunk").value = "";
   document.getElementById("maxConcurrent").value = 10;
+  document.getElementById("blockDuplicateCallers").checked = false;
   document.getElementById("postCallSurveyEnabled").checked = false;
   document.getElementById("postCallSurveyIvrId").value = "";
   document.getElementById("enabled").checked = true;
@@ -283,6 +298,8 @@ function bodyFromForm() {
     matchTrunk: document.getElementById("matchTrunk").value.trim(),
     maxConcurrent: Number(document.getElementById("maxConcurrent").value) || 10,
     ivrId: document.getElementById("ivrId").value ? Number(document.getElementById("ivrId").value) : null,
+    voiceFolder: document.getElementById("voiceFolder").value.trim(),
+    blockDuplicateCallers: document.getElementById("blockDuplicateCallers").checked,
     postCallSurveyEnabled: document.getElementById("postCallSurveyEnabled").checked,
     postCallSurveyIvrId: document.getElementById("postCallSurveyIvrId").value
       ? Number(document.getElementById("postCallSurveyIvrId").value)

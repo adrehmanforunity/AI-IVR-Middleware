@@ -1,24 +1,6 @@
-import type { CallSession, CallerLanguage } from "../domain/types.js";
-
-export const CALLER_LANGUAGE_NAME: Record<CallerLanguage, string> = {
-  0: "Urdu",
-  1: "English",
-  2: "Sindhi",
-  3: "Pashto",
-  4: "Arabic",
-};
-
-export function parseCallerLanguage(raw: unknown, fallback: CallerLanguage = 0): CallerLanguage {
-  const n = typeof raw === "number" ? raw : Number(String(raw ?? "").trim());
-  if (n === 0 || n === 1 || n === 2 || n === 3 || n === 4) return n;
-  const name = String(raw ?? "").trim().toLowerCase();
-  if (name === "urdu") return 0;
-  if (name === "english") return 1;
-  if (name === "sindhi") return 2;
-  if (name === "pashto" || name === "pushto") return 3;
-  if (name === "arabic") return 4;
-  return fallback;
-}
+import type { CallSession } from "../domain/types.js";
+import { CALLER_LANGUAGE_NAME, parseCallerLanguage } from "../ivr/languages.js";
+export { CALLER_LANGUAGE_NAME, parseCallerLanguage } from "../ivr/languages.js";
 
 export function newCallProgress(): Pick<
   CallSession,

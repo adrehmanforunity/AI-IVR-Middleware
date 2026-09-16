@@ -107,7 +107,8 @@ async function load() {
   files = data.files || [];
   page = 1;
   document.getElementById("root-hint").textContent =
-    `${files.length} file(s) under ${data.root || "—"}${data.source === "temp" ? " (temp fallback)" : ""}.`;
+    `${files.length} file(s) under ${data.root || "—"}${data.source === "temp" ? " (OS temp fallback)" : ""}.` +
+    (data.fallbackRoot && data.fallbackRoot !== data.root ? ` Fallback: ${data.fallbackRoot}` : "");
   const days = [...new Set(files.map((f) => f.day))];
   const sel = document.getElementById("filter-day");
   const keep = sel.value;

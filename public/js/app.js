@@ -21,7 +21,18 @@ function pill(state) {
 }
 
 function languageLabel(n) {
-  return { 0: "Urdu", 1: "English", 2: "Sindhi", 3: "Pashto", 4: "Arabic" }[n] || "Urdu";
+  return {
+    0: "Urdu",
+    1: "English",
+    2: "Sindhi",
+    3: "Pashto",
+    4: "Arabic",
+    5: "Other 5",
+    6: "Other 6",
+    7: "Other 7",
+    8: "Other 8",
+    9: "Other 9",
+  }[n] || "Urdu";
 }
 
 function stageTag(state) {
@@ -161,6 +172,7 @@ async function refresh() {
       disks.length ? `${disks.length} volume${disks.length === 1 ? "" : "s"}${diskCrit ? ` · ${diskCrit} critical` : ""}` : osFamilyLabel(host.osFamily),
     ),
     kpiCard("All channels busy", String(hist.aicb ?? 0), "alert-triangle", (hist.aicb ?? 0) > 0, "Last 24h"),
+    kpiCard("Duplicate CLI blocked", String(hist.duplicateCli ?? 0), "circle-x", (hist.duplicateCli ?? 0) > 0, "Last 24h"),
     kpiCard("Critical now", String(perf.criticalNow ?? 0), "bell", (perf.criticalNow ?? 0) > 0, "Open issues"),
   ].join("");
 
@@ -250,7 +262,7 @@ async function refresh() {
 
   const dids = hist.byDid || [];
   document.getElementById("by-did").innerHTML = dids.length
-    ? `<table class="table"><thead><tr><th>DID</th><th>Live</th><th>24h</th><th>Ended</th><th>Rejected</th><th>Busy</th><th>Avg</th></tr></thead><tbody>${dids
+    ? `<table class="table"><thead><tr><th>DID</th><th>Live</th><th>24h</th><th>Ended</th><th>Rejected</th><th>Busy</th><th>Dup CLI</th><th>Avg</th></tr></thead><tbody>${dids
         .map(
           (d) => `<tr>
             <td><strong>${esc(d.key)}</strong></td>
@@ -259,6 +271,7 @@ async function refresh() {
             <td>${d.ended}</td>
             <td>${d.rejected}</td>
             <td>${d.aicb}</td>
+            <td>${d.duplicateCli ?? 0}</td>
             <td>${d.avgDurationSec == null ? "—" : `${d.avgDurationSec}s`}</td>
           </tr>`,
         )

@@ -166,15 +166,16 @@ function durationSec(r: HistoryRow): number | null {
 function rollup(rows: HistoryRow[], keyOf: (r: HistoryRow) => string) {
   const map = new Map<
     string,
-    { key: string; total: number; ended: number; rejected: number; aicb: number; durationSum: number; durationN: number }
+    { key: string; total: number; ended: number; rejected: number; aicb: number; duplicateCli: number; durationSum: number; durationN: number }
   >();
   for (const r of rows) {
     const key = keyOf(r).trim() || "(none)";
-    const slot = map.get(key) ?? { key, total: 0, ended: 0, rejected: 0, aicb: 0, durationSum: 0, durationN: 0 };
+    const slot = map.get(key) ?? { key, total: 0, ended: 0, rejected: 0, aicb: 0, duplicateCli: 0, durationSum: 0, durationN: 0 };
     slot.total += 1;
     if (r.state === "ended") slot.ended += 1;
     if (r.state === "rejected") slot.rejected += 1;
     if (r.rejectReason === "aicb") slot.aicb += 1;
+    if (r.rejectReason === "cli_already_exist") slot.duplicateCli += 1;
     const d = durationSec(r);
     if (d != null) {
       slot.durationSum += d;
@@ -189,6 +190,7 @@ function rollup(rows: HistoryRow[], keyOf: (r: HistoryRow) => string) {
       ended: s.ended,
       rejected: s.rejected,
       aicb: s.aicb,
+      duplicateCli: s.duplicateCli,
       avgDurationSec: s.durationN ? Math.round(s.durationSum / s.durationN) : null,
     }))
     .sort((a, b) => b.total - a.total)
@@ -201,7 +203,7 @@ function summarize(rows: HistoryRow[]) {
   let durationSum = 0;
   let durationN = 0;
   let brief = 0;
-  const hourlyMap = new Map<string, { hour: string; total: number; ended: number; rejected: number; aicb: number }>();
+  const hourlyMap = new Map<string, { hour: string; total: number; ended: number; rejected: number; aicb: number; duplicateCli: number }>();
 
   for (const r of rows) {
     byState[r.state] = (byState[r.state] ?? 0) + 1;
@@ -213,11 +215,12 @@ function summarize(rows: HistoryRow[]) {
       if (d < BRIEF_SEC) brief += 1;
     }
     const hour = r.startedAt.slice(0, 13) + ":00";
-    const slot = hourlyMap.get(hour) ?? { hour, total: 0, ended: 0, rejected: 0, aicb: 0 };
+    const slot = hourlyMap.get(hour) ?? { hour, total: 0, ended: 0, rejected: 0, aicb: 0, duplicateCli: 0 };
     slot.total += 1;
     if (r.state === "ended") slot.ended += 1;
     if (r.state === "rejected") slot.rejected += 1;
     if (r.rejectReason === "aicb") slot.aicb += 1;
+    if (r.rejectReason === "cli_already_exist") slot.duplicateCli += 1;
     hourlyMap.set(hour, slot);
   }
 
@@ -225,12 +228,14 @@ function summarize(rows: HistoryRow[]) {
   const rejected = byState.rejected ?? 0;
   const ended = byState.ended ?? 0;
   const aicb = byReject.aicb ?? 0;
+  const duplicateCli = byReject.cli_already_exist ?? 0;
   return {
     total,
     ended,
     rejected,
     busy: (byReject.busy ?? 0) + aicb,
     aicb,
+    duplicateCli,
     briefCalls: brief,
     briefSec: BRIEF_SEC,
     acceptRate: total ? Math.round(((total - rejected) / total) * 1000) / 10 : 0,
@@ -251,7 +256,7 @@ function sampleHistory(): HistoryRow[] {
     ["ended", null, "8001", "provider-a", 18],
     ["rejected", "aicb", "7777", "provider-a", 9],
     ["rejected", "unknown_setup", "8001", "provider-b", 4],
-    ["rejected", "pulse_timeout", "7777", "provider-a", 3],
+    ["rejected", "cli_already_exist", "7777", "provider-a", 5],
     ["rejected", "maintenance", "8001", "provider-b", 2],
     ["ended", null, "7777", "provider-b", 16],
   ];

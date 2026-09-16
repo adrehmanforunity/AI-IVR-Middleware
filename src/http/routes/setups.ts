@@ -13,6 +13,16 @@ const setupBody = {
     matchTrunk: { type: "string", description: "Trunk/endpoint name, empty = any" },
     maxConcurrent: { type: "number", minimum: 1 },
     ivrId: { type: "number", nullable: true, description: "IVR to run after admit" },
+    voiceFolder: {
+      type: "string",
+      description:
+        "Optional folder under Asterisk sounds/custom. Blank = IVR file names as written. Example: hugo → custom/hugo/…",
+    },
+    blockDuplicateCallers: {
+      type: "boolean",
+      description:
+        "If Pulse Create Interaction returns isCliAlreadyExist=true, reject unanswered (no Create Session, no answer).",
+    },
     postCallSurveyEnabled: {
       type: "boolean",
       description: "CSAT after the agent hangs up. Reuses the live Pulse interaction/session.",
@@ -81,6 +91,8 @@ export async function registerSetupRoutes(
         matchTrunk?: string;
         maxConcurrent?: number;
         ivrId?: number | null;
+        voiceFolder?: string;
+        blockDuplicateCallers?: boolean;
         postCallSurveyEnabled?: boolean;
         postCallSurveyIvrId?: number | null;
       };

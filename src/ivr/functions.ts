@@ -8,6 +8,7 @@ import type { AriClient } from "../asterisk/ari.js";
 import { genericByName } from "./catalog.js";
 import { parseAction, toAriSound } from "./document.js";
 import { applyPulseFacts, callLogFields, parseCallerLanguage } from "../calls/progress.js";
+import { pulseLanguageQueueId } from "./languages.js";
 
 export type FnContext = {
   session: CallSession;
@@ -74,9 +75,11 @@ export class IvrFunctionRunner {
     if (lower === "repeat" || lower === "replay") return { ok: true, hangup: false, repeat: true };
     if (lower === "goto") return { ok: true, hangup: false, repeat: false };
     if (lower === "answer") {
-      await this.ari.answer(ctx.session.uniqueId);
-      ctx.answered = true;
-      this.log.info({ component: "ivr", ...callLogFields(ctx.session) }, "answered");
+      if (!ctx.answered) {
+        await this.ari.answer(ctx.session.uniqueId);
+        ctx.answered = true;
+        this.log.info({ component: "ivr", ...callLogFields(ctx.session) }, "answered");
+      }
       return { ok: true, hangup: false, repeat: false };
     }
     if (lower === "play") {
@@ -84,17 +87,26 @@ export class IvrFunctionRunner {
       if (!sound) return { ok: false, hangup: false, repeat: false };
       return { ok: true, hangup: false, repeat: false, play: sound };
     }
-    if (lower === "setlanguage") {
+    const isSetLanguage = lower === "setlanguage" || lower === "proc_setlanguage";
+    if (isSetLanguage) {
       ctx.session.language = parseCallerLanguage(arg, ctx.session.language);
     }
 
     if (def?.kind === "pulse" && def.pulseSlot) {
       if (def.pulseSlot === "createInteraction") {
         const r = await this.lifecycle.createInteraction(ctx.session);
-        return { ok: r.ok, hangup: false, repeat: false };
+        if (!r.ok) {
+          ctx.session.rejectReason = r.reason;
+          return { ok: false, hangup: false, repeat: false };
+        }
+        if (this.rejectDuplicateCli(ctx.session)) {
+          return { ok: false, hangup: false, repeat: false };
+        }
+        return { ok: true, hangup: false, repeat: false };
       }
       if (def.pulseSlot === "createSession") {
         const r = await this.lifecycle.createSession(ctx.session);
+        if (!r.ok) ctx.session.rejectReason = r.reason;
         return { ok: r.ok, hangup: false, repeat: false };
       }
       if (def.pulseSlot === "closeSession") {
@@ -102,9 +114,13 @@ export class IvrFunctionRunner {
         return { ok: true, hangup: false, repeat: false };
       }
       if (def.pulseSlot === "addCallInteraction") {
+        const mapped =
+          isSetLanguage
+            ? { languageQueueId: pulseLanguageQueueId(this.store.getSettings(), ctx.session.language) }
+            : undefined;
         const r = await this.lifecycle.addCallInteraction(
           ctx.session,
-          addInteractionFieldsForFunction(def.name, arg),
+          addInteractionFieldsForFunction(def.name, arg, mapped),
         );
         return { ok: r.ok, hangup: false, repeat: false };
       }
@@ -135,12 +151,31 @@ export class IvrFunctionRunner {
       return { ok: result.ok, hangup: false, repeat: false };
     }
 
-    if (lower === "setlanguage") {
+    if (isSetLanguage) {
       this.log.info({ component: "ivr", ...callLogFields(ctx.session) }, "language set");
       return { ok: true, hangup: false, repeat: false };
     }
 
     this.log.warn({ component: "ivr", action, param, ...callLogFields(ctx.session) }, "unknown function — treated as fail");
     return { ok: false, hangup: false, repeat: false };
+  }
+
+  /** Inbound route flag: after Create Interaction, fail the block if Pulse already has this CLI. */
+  private rejectDuplicateCli(session: CallSession): boolean {
+    const setup = session.setupId != null ? this.store.getSetup(session.setupId) : null;
+    if (!setup?.blockDuplicateCallers || session.isCliAlreadyExist !== true) return false;
+    session.rejectReason = "cli_already_exist";
+    const count = this.store.incrementDuplicateBlockCount(setup.id);
+    this.log.warn(
+      {
+        component: "inbound",
+        isCliAlreadyExist: true,
+        blockDuplicateCallers: true,
+        duplicateBlockCount: count,
+        ...callLogFields(session),
+      },
+      "this caller at this time was block as rejected reason isCliAlreadyExist=true, IVR Block duplicate callers enabled",
+    );
+    return true;
   }
 }

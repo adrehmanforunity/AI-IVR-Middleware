@@ -32,11 +32,22 @@ import { MIGRATION_V9 } from "./migrations/009_stations.js";
 import { MIGRATION_V10 } from "./migrations/010_outbound_routes.js";
 import { MIGRATION_V11 } from "./migrations/011_pulse_screen_facts.js";
 import { MIGRATION_V12 } from "./migrations/012_post_call_survey.js";
+import { MIGRATION_V13 } from "./migrations/013_block_duplicate_callers.js";
+import { MIGRATION_V14 } from "./migrations/014_voice_folder.js";
 import { GENERIC_FUNCTIONS } from "../ivr/catalog.js";
+import { sanitizeVoiceFolder } from "../ivr/voice.js";
 import { LEGACY_PULSE_SLOTS, LEGACY_SLOT_REMAP, PULSE_API_SEEDS } from "../pulse/seed.js";
 import { PULSE_API_KEY_SETTING } from "../pulse/auth.js";
 import { normalizeSave, normalizeMenu } from "../ivr/document.js";
 import { LAB_SAMPLE_IVR, LAB_SAMPLE_IVR_NAME } from "../ivr/labSample.js";
+import {
+  applyHugoLanguageMigrate,
+  HUGO_BANK_IVR,
+  HUGO_INBOUND_DID,
+  HUGO_IVR_NAME,
+  hugoLanguageNeedsMigrate,
+} from "../ivr/hugoBank.js";
+import { defaultLanguagePulseQueueJson, LANGUAGE_PULSE_QUEUE_SETTING } from "../ivr/languages.js";
 import { MENU_DEFAULT_VALUES } from "../ivr/menuDefaults.js";
 import { parseSmtp, SMTP_DEFAULTS, SMTP_SETTING_KEYS, type SmtpConfig } from "../mail/smtp.js";
 import { parseCallerLanguage } from "../calls/progress.js";
@@ -374,6 +385,8 @@ export class ConfigStore {
       matchTrunk?: string;
       maxConcurrent?: number;
       ivrId?: number | null;
+      voiceFolder?: string;
+      blockDuplicateCallers?: boolean;
       postCallSurveyEnabled?: boolean;
       postCallSurveyIvrId?: number | null;
     },
@@ -383,13 +396,16 @@ export class ConfigStore {
     const surveyOn = input.postCallSurveyEnabled === true;
     const surveyIvr = input.postCallSurveyIvrId ?? null;
     requireSurveyIvr(surveyOn, surveyIvr);
+    const blockDup = input.blockDuplicateCallers === true;
+    const voiceFolder = sanitizeVoiceFolder(input.voiceFolder);
     let id = 0;
     this.runWrite(() => {
       const r = this.requireDb()
         .prepare(
           `INSERT INTO call_setups (name, enabled, match_did, match_trunk, max_concurrent, ivr_id,
+            voice_folder, block_duplicate_callers, duplicate_block_count,
             post_call_survey_enabled, post_call_survey_ivr_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
         )
         .run(
           input.name,
@@ -398,6 +414,8 @@ export class ConfigStore {
           input.matchTrunk?.trim() || null,
           input.maxConcurrent ?? 10,
           input.ivrId ?? null,
+          voiceFolder,
+          blockDup ? 1 : 0,
           surveyOn ? 1 : 0,
           surveyIvr,
           now,
@@ -425,6 +443,8 @@ export class ConfigStore {
       matchTrunk: patch.matchTrunk !== undefined ? patch.matchTrunk : current.matchTrunk,
       maxConcurrent: patch.maxConcurrent ?? current.maxConcurrent,
       ivrId: patch.ivrId !== undefined ? patch.ivrId : current.ivrId,
+      voiceFolder: patch.voiceFolder !== undefined ? sanitizeVoiceFolder(patch.voiceFolder) : current.voiceFolder,
+      blockDuplicateCallers: patch.blockDuplicateCallers ?? current.blockDuplicateCallers,
       postCallSurveyEnabled: patch.postCallSurveyEnabled ?? current.postCallSurveyEnabled,
       postCallSurveyIvrId:
         patch.postCallSurveyIvrId !== undefined ? patch.postCallSurveyIvrId : current.postCallSurveyIvrId,
@@ -435,6 +455,7 @@ export class ConfigStore {
       this.requireDb()
         .prepare(
           `UPDATE call_setups SET name=?, enabled=?, match_did=?, match_trunk=?, max_concurrent=?, ivr_id=?,
+            voice_folder=?, block_duplicate_callers=?,
             post_call_survey_enabled=?, post_call_survey_ivr_id=?, updated_at=?
            WHERE id=?`,
         )
@@ -445,6 +466,8 @@ export class ConfigStore {
           next.matchTrunk.trim() || null,
           next.maxConcurrent,
           next.ivrId,
+          next.voiceFolder,
+          next.blockDuplicateCallers ? 1 : 0,
           next.postCallSurveyEnabled ? 1 : 0,
           next.postCallSurveyIvrId,
           now,
@@ -457,6 +480,17 @@ export class ConfigStore {
     const updated = this.getSetup(id);
     if (!updated) throw new Error("failed to load updated setup");
     return updated;
+  }
+
+  incrementDuplicateBlockCount(id: number): number {
+    if (!this.db) return 0;
+    const now = new Date().toISOString();
+    this.runWrite(() => {
+      this.requireDb()
+        .prepare("UPDATE call_setups SET duplicate_block_count = duplicate_block_count + 1, updated_at=? WHERE id=?")
+        .run(now, id);
+    });
+    return this.getSetup(id)?.duplicateBlockCount ?? 0;
   }
 
   deleteSetup(id: number, actor: string): void {
@@ -1215,6 +1249,28 @@ export class ConfigStore {
         }
       }
       db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '12')").run();
+      version = 12;
+    }
+    if (version < 13) {
+      for (const stmt of MIGRATION_V13.split(";").map((s) => s.trim()).filter(Boolean)) {
+        try {
+          db.exec(`${stmt};`);
+        } catch {
+          /* column already present */
+        }
+      }
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '13')").run();
+      version = 13;
+    }
+    if (version < 14) {
+      for (const stmt of MIGRATION_V14.split(";").map((s) => s.trim()).filter(Boolean)) {
+        try {
+          db.exec(`${stmt};`);
+        } catch {
+          /* column already present */
+        }
+      }
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '14')").run();
     }
   }
 
@@ -1293,12 +1349,16 @@ export class ConfigStore {
     this.db
       .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('voice_files_path', ?)")
       .run("/var/lib/asterisk/sounds/custom");
+    this.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
+      .run(LANGUAGE_PULSE_QUEUE_SETTING, defaultLanguagePulseQueueJson());
     this.seedPulseApisFromCatalog();
     const ivrCount = this.db.prepare("SELECT COUNT(*) AS n FROM ivrs").get() as { n: number };
     if (ivrCount.n === 0) {
       this.createIvr(PULSE_IVR_SEED, "seed");
     }
     this.ensureLabSampleIvr();
+    this.ensureHugoBankIvr();
     this.ensureIvrAnswerSteps();
   }
 
@@ -1355,12 +1415,72 @@ export class ConfigStore {
     } else {
       this.createIvr(LAB_SAMPLE_IVR, "seed");
     }
-    const ivr = this.listIvrs().find((i) => i.name === LAB_SAMPLE_IVR_NAME);
-    if (!ivr) return;
-    for (const setup of this.listSetups()) {
-      if (setup.matchDid.trim() === "7777" && setup.ivrId !== ivr.id) {
-        this.updateSetup(setup.id, { ivrId: ivr.id }, "seed");
+  }
+
+  private ensureHugoBankIvr(): void {
+    if (!this.db) return;
+    let ivr = this.listIvrs().find((i) => i.name === HUGO_IVR_NAME);
+    if (!ivr) {
+      ivr = this.createIvr(HUGO_BANK_IVR, "seed");
+    } else {
+      const current = ivr;
+      const hasCreate = current.menus.some((m) =>
+        m.options.some((o) => o.action.toLowerCase() === "proc_createinteraction"),
+      );
+      if (!hasCreate) {
+        this.updateIvr(current.id, HUGO_BANK_IVR, "seed");
+        ivr = this.getIvr(current.id) ?? current;
+      } else {
+        const flatten = (s: string) =>
+          String(s ?? "")
+            .split("custom/hugo/")
+            .join("")
+            .replace(/(^|,\s*)custom\//gi, "$1");
+        const needsFlatten = current.menus.some((m) =>
+          [m.menuFile, m.fileInvalid, m.fileNoInput].some((s) => String(s ?? "").includes("custom/")),
+        );
+        if (needsFlatten) {
+          this.updateIvr(
+            current.id,
+            {
+              name: current.name,
+              enabled: current.enabled,
+              entryKey: current.entryKey,
+              menus: current.menus.map((m) => ({
+                ...m,
+                isEntry: m.key === current.entryKey,
+                menuFile: flatten(m.menuFile),
+                fileInvalid: flatten(m.fileInvalid),
+                fileNoInput: flatten(m.fileNoInput),
+              })),
+            },
+            "seed",
+          );
+          ivr = this.getIvr(current.id) ?? current;
+        }
+        if (ivr && hugoLanguageNeedsMigrate(ivr)) {
+          this.updateIvr(ivr.id, applyHugoLanguageMigrate(ivr), "seed");
+          ivr = this.getIvr(ivr.id) ?? ivr;
+        }
       }
+    }
+    const existing = this.listSetups().find((s) => s.matchDid.trim() === HUGO_INBOUND_DID);
+    if (!existing) {
+      this.createSetup(
+        {
+          name: "Hugo Bank inbound",
+          matchDid: HUGO_INBOUND_DID,
+          matchTrunk: "",
+          maxConcurrent: 20,
+          ivrId: ivr.id,
+          enabled: true,
+        },
+        "seed",
+      );
+      return;
+    }
+    if (existing.ivrId !== ivr.id) {
+      this.updateSetup(existing.id, { ivrId: ivr.id }, "seed");
     }
   }
 
@@ -1505,6 +1625,9 @@ type SetupRow = {
   match_trunk: string | null;
   max_concurrent: number;
   ivr_id?: number | null;
+  voice_folder?: string | null;
+  block_duplicate_callers?: number | null;
+  duplicate_block_count?: number | null;
   post_call_survey_enabled?: number | null;
   post_call_survey_ivr_id?: number | null;
   created_at: string;
@@ -1785,6 +1908,9 @@ function mapSetup(row: SetupRow): CallSetup {
     matchTrunk: row.match_trunk ?? "",
     maxConcurrent: row.max_concurrent,
     ivrId: row.ivr_id ?? null,
+    voiceFolder: sanitizeVoiceFolder(row.voice_folder ?? ""),
+    blockDuplicateCallers: row.block_duplicate_callers === 1,
+    duplicateBlockCount: Number(row.duplicate_block_count ?? 0),
     postCallSurveyEnabled: row.post_call_survey_enabled === 1,
     postCallSurveyIvrId: row.post_call_survey_ivr_id ?? null,
     createdAt: row.created_at,

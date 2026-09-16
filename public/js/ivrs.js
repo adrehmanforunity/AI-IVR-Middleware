@@ -137,8 +137,8 @@ function renderStep() {
         <div><label>Menu id</label><input data-m="${i}:key" value="${esc(m.key)}" /></div>
         <div><label>Menu name</label><input data-m="${i}:name" value="${esc(m.name)}" /></div>
         <div class="full"><label>What this menu is for</label><input data-m="${i}:description" value="${esc(m.description)}" /></div>
-        <div class="full"><label>Prompt to play</label><input data-m="${i}:menuFile" value="${esc(m.menuFile || m.fileMenu || "")}" placeholder="none, or welcome,main-menu" />
-          <div class="hint">Leave as none to play nothing and go to “after too many silences”. Several prompts: comma-separated names.</div></div>
+        <div class="full"><label>Prompt to play</label><input data-m="${i}:menuFile" value="${esc(m.menuFile || m.fileMenu || "")}" placeholder="none, or hugo-greeting" />
+          <div class="hint">File name only (not custom/…). Path = IIM Setup voice folder + inbound Voice subfolder. Several prompts: comma-separated. none = play nothing.</div></div>
         <div><label>Wrong-key prompt</label><input data-m="${i}:fileInvalid" value="${esc(m.fileInvalid)}" placeholder="use system default" /></div>
         <div><label>No-key prompt</label><input data-m="${i}:fileNoInput" value="${esc(m.fileNoInput || "")}" placeholder="use system default" /></div>
         <div><label>Keys this menu accepts</label><input data-m="${i}:inputsAcceptable" value="${esc(m.inputsAcceptable || "")}" placeholder="use system default" /></div>
@@ -278,6 +278,69 @@ function openFlow(id) {
   window.open(`/ivrs/flow?id=${encodeURIComponent(id)}`, "_blank", "noopener");
 }
 
+let lastAnalyzeFiles = [];
+
+function roleLabel(role) {
+  return { menu: "Menu", invalid: "Invalid", noInput: "No input", play: "Play" }[role] || role;
+}
+
+function showAnalyze(data) {
+  lastAnalyzeFiles = (data.files || []).map((f) => f.placeAs);
+  document.getElementById("analyze-title").textContent = `Analyze — ${data.name || "IVR"}`;
+  document.getElementById("analyze-summary").textContent =
+    `${data.uniqueCount} unique file${data.uniqueCount === 1 ? "" : "s"} across ${data.menuCount} menus. ` +
+    `Place them on Asterisk (wav/gsm). Missing files play a beep. Voice root: ${data.voiceRoot}. ` +
+    `{language} expands to ur, en, sd, ps, ar — keep the languages you actually use.`;
+  const rows = (data.files || [])
+    .map((f) => {
+      const used = (f.usedBy || [])
+        .map((u) => `${esc(u.menuKey)} ${esc(roleLabel(u.role))}`)
+        .join(", ");
+      const lang = f.languageCode ? ` · ${esc(f.languageCode)}` : "";
+      return `<tr>
+        <td><code>${esc(f.placeAs.split("/").pop() || "")}</code>${lang}</td>
+        <td><code>${esc(f.ariMedia)}</code></td>
+        <td><code>${esc(f.placeAs)}</code></td>
+        <td>${used}</td>
+      </tr>`;
+    })
+    .join("");
+  document.getElementById("analyze-body").innerHTML = rows
+    ? `<table class="table"><thead><tr><th>File name</th><th>ARI (what IIM plays)</th><th>Place on Asterisk</th><th>Used by</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '<p class="muted">No voice files — this IVR only has silent / none menus.</p>';
+  document.getElementById("analyze-modal").hidden = false;
+}
+
+async function analyzeSaved(id) {
+  const res = await api(`/v1/ivrs/${id}/analyze`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    document.getElementById("msg").textContent = data.error || "Analyze failed";
+    return;
+  }
+  showAnalyze(data);
+}
+
+async function analyzeEditor() {
+  const msg = document.getElementById("msg");
+  const body = collect();
+  if (!body.menus?.length) {
+    msg.textContent = "Add at least one menu, then Analyze.";
+    return;
+  }
+  const res = await api("/v1/ivrs/analyze", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    msg.textContent = data.error || "Analyze failed";
+    return;
+  }
+  showAnalyze(data);
+}
+
 async function refresh() {
   const rows = await (await api("/v1/ivrs")).json();
   const el = document.getElementById("list");
@@ -298,6 +361,7 @@ async function refresh() {
         <td>
           <div class="btn-row">
           <button class="btn btn-outline-secondary" type="button" data-edit="${x.id}">Edit</button>
+          <button class="btn btn-outline-secondary" type="button" data-analyze="${x.id}">Analyze</button>
           <button class="btn btn-outline-secondary" type="button" data-flow="${x.id}">Flow</button>
           <button class="btn btn-outline-secondary" type="button" data-del="${x.id}">Remove</button>
           </div>
@@ -307,6 +371,9 @@ async function refresh() {
       .join("")}</tbody></table>`;
   el.querySelectorAll("[data-edit]").forEach((btn) => {
     btn.addEventListener("click", () => load(rows.find((x) => String(x.id) === btn.getAttribute("data-edit"))));
+  });
+  el.querySelectorAll("[data-analyze]").forEach((btn) => {
+    btn.addEventListener("click", () => analyzeSaved(btn.getAttribute("data-analyze")));
   });
   el.querySelectorAll("[data-flow]").forEach((btn) => {
     btn.addEventListener("click", () => openFlow(btn.getAttribute("data-flow")));
@@ -426,6 +493,19 @@ document.getElementById("add-menu").addEventListener("click", () => {
 document.getElementById("new-ivr").addEventListener("click", () => newIvr());
 document.getElementById("close-editor").addEventListener("click", () => closeEditor());
 document.getElementById("open-flow").addEventListener("click", () => openFlow(document.getElementById("ivrId").value));
+document.getElementById("analyze-ivr").addEventListener("click", () => analyzeEditor());
+document.getElementById("analyze-close").addEventListener("click", () => {
+  document.getElementById("analyze-modal").hidden = true;
+});
+document.getElementById("analyze-copy").addEventListener("click", async () => {
+  const text = lastAnalyzeFiles.join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    document.getElementById("analyze-summary").textContent = `Copied ${lastAnalyzeFiles.length} paths.`;
+  } catch {
+    document.getElementById("analyze-summary").textContent = "Copy failed — select the table instead.";
+  }
+});
 document.getElementById("logout").addEventListener("click", async () => {
   await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
   window.location.href = "/";

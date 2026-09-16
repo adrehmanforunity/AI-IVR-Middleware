@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ConfigStore } from "../../db/sqlite.js";
 import type { AsteriskTarget } from "../../asterisk/types.js";
 import { userFromRequest } from "./auth.js";
+import { LANGUAGES, parseLanguagePulseQueue } from "../../ivr/languages.js";
 
 const targetSchema = {
   type: "object",
@@ -112,6 +113,29 @@ export async function registerConfigRoutes(app: FastifyInstance, store: ConfigSt
       const raw = store.getSettings();
       const { smtp_password: _smtp, pulse_api_key: _pulse, ...rest } = raw;
       return rest;
+    },
+  );
+
+  app.get(
+    "/v1/languages",
+    {
+      schema: {
+        tags: ["config"],
+        summary: "Internal language codes and Pulse languageQueueId mapping",
+        security: [{ apiKey: [] }],
+      },
+    },
+    async () => {
+      const map = parseLanguagePulseQueue(store.getSettings());
+      return {
+        languages: LANGUAGES.map((l) => ({
+          id: l.id,
+          code: l.code,
+          name: l.name,
+          folder: l.folder,
+          pulseQueueId: map[l.code] ?? l.pulseDefault,
+        })),
+      };
     },
   );
 

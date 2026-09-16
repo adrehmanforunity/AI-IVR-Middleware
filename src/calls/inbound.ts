@@ -170,37 +170,50 @@ export class InboundController {
       .finally(() => this.admitting.delete(facts.uniqueId));
   }
 
-  /** Admit only. Pulse Create Interaction + Create Session run before answer or reject. */
+  /** Admit only. IVR first block runs next (Create Interaction, etc.). No IVR → Pulse screen then answer. */
   private async holdInStasis(session: CallSession): Promise<void> {
     if (!this.registry.getByUnique(session.uniqueId)) return;
-    const screen = await this.lifecycle.screenBeforeAnswer(session);
+    const setup = session.setupId != null ? this.store.getSetup(session.setupId) : null;
+    if (setup?.ivrId) {
+      this.log.info(
+        { component: "inbound", ivrId: setup.ivrId, ...callLogFields(session) },
+        "admitted — IVR first block starts (still ringing)",
+      );
+      this.ivr.start(session, setup.ivrId);
+      return;
+    }
+    const screen = await this.lifecycle.screenBeforeAnswer(session, {
+      blockDuplicateCallers: setup?.blockDuplicateCallers === true,
+    });
     if (!screen.ok) {
       session.rejectReason = screen.reason;
       this.registry.update(session);
-      this.log.warn(
-        { component: "inbound", reason: screen.reason, ...callLogFields(session) },
-        "PULSE screen failed — reject without answer",
-      );
+      if (screen.reason === "cli_already_exist" && session.setupId != null) {
+        const count = this.store.incrementDuplicateBlockCount(session.setupId);
+        this.log.warn(
+          {
+            component: "inbound",
+            reason: screen.reason,
+            duplicateBlockCount: count,
+            isCliAlreadyExist: true,
+            ...callLogFields(session),
+          },
+          "duplicate CLI rejected — isCliAlreadyExist=true, IVR Block duplicate callers enabled",
+        );
+      } else {
+        this.log.warn(
+          { component: "inbound", reason: screen.reason, ...callLogFields(session) },
+          "PULSE screen failed — reject without answer",
+        );
+      }
       await this.lifecycle.closeIfOpen(session, 0);
       await this.ari.hangup(session.uniqueId, "rejected");
       return;
     }
     session.state = "session";
     this.registry.update(session);
-    const setup = session.setupId != null ? this.store.getSetup(session.setupId) : null;
-    if (setup?.ivrId) {
-      this.log.info(
-        { component: "inbound", ivrId: setup.ivrId, ...callLogFields(session) },
-        "admitted — IVR starts (answer only if the script says so)",
-      );
-      this.ivr.start(session, setup.ivrId);
-      return;
-    }
     await this.ari.answer(session.uniqueId);
-    this.log.info(
-      { component: "inbound", ...callLogFields(session) },
-      "answered — no IVR on this call setup",
-    );
+    this.log.info({ component: "inbound", ...callLogFields(session) }, "answered — no IVR on this call setup");
   }
 
   private rejectAicb(

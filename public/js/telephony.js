@@ -97,19 +97,47 @@ async function boot() {
 }
 
 async function refreshAll(fillForm) {
-  const [statusRes, cfgRes, eventsRes, settingsRes] = await Promise.all([
+  const [statusRes, cfgRes, eventsRes, settingsRes, langRes] = await Promise.all([
     api("/v1/status"),
     api("/v1/config/asterisk"),
     api("/v1/telephony/events"),
     api("/v1/config/settings"),
+    api("/v1/languages"),
   ]);
   const s = await statusRes.json();
   const cfg = await cfgRes.json();
   const events = await eventsRes.json();
   const settings = await settingsRes.json();
+  const langs = langRes.ok ? await langRes.json() : { languages: [] };
   renderStatus(s);
-  if (fillForm) fillFrom(cfg, s.telephony, settings);
+  if (fillForm) {
+    fillFrom(cfg, s.telephony, settings);
+    renderLanguageTable(langs.languages || []);
+  }
   renderEvents(events.events || []);
+}
+
+function renderLanguageTable(rows) {
+  const tbody = document.querySelector("#lang-pulse-table tbody");
+  if (!tbody) return;
+  tbody.innerHTML = (rows.length ? rows : []).map((l) => `
+    <tr>
+      <td><code>${esc(l.code)}</code></td>
+      <td>${esc(l.id)}</td>
+      <td>${esc(l.name)}</td>
+      <td><input type="number" min="0" data-lang-code="${esc(l.code)}" value="${esc(l.pulseQueueId)}" /></td>
+    </tr>
+  `).join("");
+}
+
+function languagePulseQueueJson() {
+  const map = {};
+  document.querySelectorAll("#lang-pulse-table input[data-lang-code]").forEach((el) => {
+    const code = el.getAttribute("data-lang-code");
+    const n = Number(el.value);
+    if (code) map[code] = Number.isFinite(n) ? n : 0;
+  });
+  return JSON.stringify(map);
 }
 
 function renderStatus(s) {
@@ -256,7 +284,7 @@ function asteriskBody() {
 document.getElementById("tel-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const msg = document.getElementById("save-msg");
-  if (!confirm("Save this IIM instance identity, AMI/ARI settings, IIM extension range, voice folder, IVR menu defaults, and PULSE Swagger URL?")) return;
+  if (!confirm("Save this IIM instance identity, AMI/ARI settings, IIM extension range, voice folder, language Pulse ids, IVR menu defaults, and PULSE Swagger URL?")) return;
   const cfgRes = await api("/v1/config/asterisk", {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -302,6 +330,16 @@ document.getElementById("tel-form").addEventListener("submit", async (e) => {
       const all = await res.json().catch(() => null);
       if (all) window.applyInstanceBrand(all);
     }
+  }
+  const langRes = await api("/v1/config/settings", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key: "language_pulse_queue", value: languagePulseQueueJson() }),
+  });
+  if (!langRes.ok) {
+    menuOk = false;
+    const err = await langRes.json().catch(() => ({}));
+    menuErr = err.error || menuErr;
   }
   const swagger = await swaggerRes.json().catch(() => ({}));
   if (!cfgRes.ok || !telRes.ok || !swaggerRes.ok || !menuOk) {
